@@ -1,0 +1,250 @@
+// Handover, warranty, complaints/SLA, escalations, and work orders.
+
+enum HandoverStatus {
+  SCHEDULED
+  INSPECTION_PENDING
+  COMPLETED
+  CANCELLED
+}
+
+// The Sales -> CX relationship handoff (Sales Playbook §6) — distinct from
+// HandoverStatus above, which is the physical unit handover months later
+// (CX Playbook Stage 04). This one fires the moment a deal closes.
+enum ClientHandoverStatus {
+  PENDING_ACK
+  ACKNOWLEDGED
+  INTRODUCED
+  WELCOMED
+  COMPLETE
+}
+
+model ClientHandover {
+  id           String               @id @default(cuid())
+  saleId       String               @unique @map("sale_id")
+  sale         Sale                 @relation(fields: [saleId], references: [id])
+  customerId   String               @map("customer_id")
+  customer     Customer             @relation(fields: [customerId], references: [id])
+  consultantId String               @map("consultant_id")
+  consultant   User                 @relation("ClientHandoverConsultant", fields: [consultantId], references: [id])
+  cxLeadId     String?              @map("cx_lead_id")
+  cxLead       User?                @relation("ClientHandoverCxLead", fields: [cxLeadId], references: [id])
+  status       ClientHandoverStatus @default(PENDING_ACK)
+
+  dossierComplete Boolean @default(false) @map("dossier_complete")
+  dossierNote     String? @map("dossier_note")
+
+  notifiedAt           DateTime  @default(now()) @map("notified_at")
+  acknowledgedAt       DateTime? @map("acknowledged_at")
+  introductionLoggedAt DateTime? @map("introduction_logged_at")
+  welcomeSentAt        DateTime? @map("welcome_sent_at")
+
+  qualityScore Int?    @map("quality_score")
+  qualityNote  String? @map("quality_note")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([cxLeadId])
+  @@map("client_handovers")
+}
+
+enum WarrantyClaimStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  RESOLVED
+}
+
+enum ComplaintStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+model Handover {
+  id            String         @id @default(cuid())
+  unitId        String         @map("unit_id")
+  unit          Unit           @relation(fields: [unitId], references: [id])
+  customerId    String         @map("customer_id")
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  status        HandoverStatus @default(SCHEDULED)
+  scheduledAt   DateTime?      @map("scheduled_at")
+  conductedById String?        @map("conducted_by")
+  conductedBy   User?          @relation("HandoverConductedBy", fields: [conductedById], references: [id])
+  completedAt   DateTime?      @map("completed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  warrantyClaims WarrantyClaim[]
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("handovers")
+}
+
+model WarrantyClaim {
+  id           String              @id @default(cuid())
+  unitId       String              @map("unit_id")
+  unit         Unit                @relation(fields: [unitId], references: [id])
+  customerId   String              @map("customer_id")
+  customer     Customer            @relation(fields: [customerId], references: [id])
+  handoverId   String?             @map("handover_id")
+  handover     Handover?           @relation(fields: [handoverId], references: [id])
+  description  String
+  status       WarrantyClaimStatus @default(SUBMITTED)
+  reviewedById String?             @map("reviewed_by")
+  reviewedBy   User?               @relation("WarrantyClaimReviewedBy", fields: [reviewedById], references: [id])
+  resolvedAt   DateTime?           @map("resolved_at")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  @@index([unitId])
+  @@index([status])
+  @@map("warranty_claims")
+}
+
+model ComplaintCategory {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  defaultPriority    Priority @default(MEDIUM) @map("default_priority")
+  responseSlaHours   Int      @default(24) @map("response_sla_hours")
+  resolutionSlaHours Int      @default(72) @map("resolution_sla_hours")
+
+  complaints Complaint[]
+
+  @@map("complaint_categories")
+}
+
+model Complaint {
+  id           String            @id @default(cuid())
+  customerId   String            @map("customer_id")
+  customer     Customer          @relation(fields: [customerId], references: [id])
+  unitId       String?           @map("unit_id")
+  unit         Unit?             @relation(fields: [unitId], references: [id])
+  categoryId   String            @map("category_id")
+  category     ComplaintCategory @relation(fields: [categoryId], references: [id])
+  subject      String
+  description  String
+  priority     Priority          @default(MEDIUM)
+  status       ComplaintStatus   @default(OPEN)
+  assignedToId String?           @map("assigned_to")
+  assignedTo   User?             @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+  openedAt     DateTime          @default(now()) @map("opened_at")
+  resolvedAt   DateTime?         @map("resolved_at")
+  closedAt     DateTime?         @map("closed_at")
+
+  // SLA pause/hold (2026 source-docs gap analysis §4 — "Waiting for Client Details" /
+  // "Awaiting Third-Party" states stop the SLA clock). On resume, the due dates in
+  // ComplaintSLA are shifted forward by the elapsed paused duration.
+  pausedAt    DateTime? @map("paused_at")
+  pauseReason String?   @map("pause_reason")
+
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  updates     ComplaintUpdate[]
+  attachments ComplaintAttachment[]
+  sla         ComplaintSLA?
+  escalations Escalation[]
+  workOrders  WorkOrder[]
+
+  @@index([customerId])
+  @@index([unitId])
+  @@index([status])
+  @@index([assignedToId])
+  @@map("complaints")
+}
+
+model ComplaintUpdate {
+  id          String    @id @default(cuid())
+  complaintId String    @map("complaint_id")
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  note        String
+  updatedById String    @map("updated_by")
+  updatedBy   User      @relation("ComplaintUpdateBy", fields: [updatedById], references: [id])
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([complaintId])
+  @@map("complaint_updates")
+}
+
+model ComplaintAttachment {
+  id          String    @id @default(cuid())
+  complaintId String    @map("complaint_id")
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  fileUrl     String    @map("file_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([complaintId])
+  @@map("complaint_attachments")
+}
+
+model ComplaintSLA {
+  id                 String    @id @default(cuid())
+  complaintId        String    @unique @map("complaint_id")
+  complaint          Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  responseDueAt      DateTime  @map("response_due_at")
+  resolutionDueAt    DateTime  @map("resolution_due_at")
+  respondedAt        DateTime? @map("responded_at")
+  resolvedAt         DateTime? @map("resolved_at")
+  responseBreached   Boolean   @default(false) @map("response_breached")
+  resolutionBreached Boolean   @default(false) @map("resolution_breached")
+
+  @@map("complaint_slas")
+}
+
+model Escalation {
+  id              String           @id @default(cuid())
+  complaintId     String           @map("complaint_id")
+  complaint       Complaint        @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  reason          String
+  escalatedFromId String           @map("escalated_from")
+  escalatedFrom   User             @relation("EscalationFrom", fields: [escalatedFromId], references: [id])
+  escalatedToId   String           @map("escalated_to")
+  escalatedTo     User             @relation("EscalationTo", fields: [escalatedToId], references: [id])
+  status          EscalationStatus @default(OPEN)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  resolvedAt      DateTime?        @map("resolved_at")
+
+  @@index([complaintId])
+  @@map("escalations")
+}
+
+model WorkOrder {
+  id                   String          @id @default(cuid())
+  complaintId          String?         @map("complaint_id")
+  complaint            Complaint?      @relation(fields: [complaintId], references: [id])
+  assignedContractorId String?         @map("assigned_contractor_id")
+  assignedContractor   Contractor?     @relation(fields: [assignedContractorId], references: [id])
+  description          String
+  status               WorkOrderStatus @default(OPEN)
+  targetCompletionDate DateTime?       @map("target_completion_date")
+  completedAt          DateTime?       @map("completed_at")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  @@index([complaintId])
+  @@index([status])
+  @@map("work_orders")
+}

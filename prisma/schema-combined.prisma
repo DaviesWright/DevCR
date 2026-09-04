@@ -1,0 +1,2051 @@
+// ============================================================
+// DevCRM data model — consolidated single-file Prisma schema
+// (source of truth is the split files under prisma/schema/;
+// this file is a generated, portable combination of all of them)
+// ============================================================
+// Conventions used throughout:
+//   - id: cuid() string primary key
+//   - createdAt / updatedAt on every table; deletedAt (soft delete) on primary business entities
+//   - money: Decimal(14,2) + a sibling `currency` column (default "GHS"), never Float
+//   - status fields are enums, never free-text strings
+//   - cross-domain links (Document, Task, Interaction, Feedback) use a polymorphic
+//     (relatedEntityType, relatedEntityId) pair since Prisma has no native polymorphic relation
+//   - Payment is intentionally generic (method + reference only) — gateway integration
+//     (Paystack/Flutterwave/Mobile Money APIs, webhooks, reconciliation) belongs to the
+//     Finance module's service layer, not this schema
+
+// DevCRM data model — Prisma multi-file schema (prismaSchemaFolder preview feature).
+// Conventions used across every file in this folder:
+//   - id: cuid() string primary key
+//   - createdAt / updatedAt on every table; deletedAt (soft delete) on primary business entities
+//   - money: Decimal(14,2) + a sibling `currency` column (default "GHS"), never Float
+//   - status fields are enums, never free-text strings
+//   - cross-domain links (Document, Task, Interaction, Feedback) use a polymorphic
+//     (relatedEntityType, relatedEntityId) pair since Prisma has no native polymorphic relation
+//   - Payment is intentionally generic (method + reference only) — gateway integration
+//     (Paystack/Flutterwave/Mobile Money APIs, webhooks, reconciliation) belongs to the
+//     Finance module's service layer, not this schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["prismaSchemaFolder"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Polymorphic target for Document / Task / Interaction / Feedback
+enum RelatedEntityType {
+  LEAD
+  CUSTOMER
+  OPPORTUNITY
+  UNIT
+  SALE
+  CONTRACT
+  COMPLAINT
+  ASSET
+  WORK_ORDER
+  HANDOVER
+  SITE_VISIT
+  SNAGGING_INSPECTION
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Roles, permissions, users, departments, sessions, and the audit trail.
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  module      String
+  action      String
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String     @map("role_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @map("permission_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Department {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  parentId  String?      @map("parent_id")
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children  Department[] @relation("DepartmentHierarchy")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("departments")
+}
+
+model User {
+  id               String      @id @default(cuid())
+  employeeCode     String?     @unique @map("employee_code")
+  firstName        String      @map("first_name")
+  lastName         String      @map("last_name")
+  email            String      @unique
+  phone            String?
+  passwordHash     String      @map("password_hash")
+  roleId           String      @map("role_id")
+  role             Role        @relation(fields: [roleId], references: [id])
+  departmentId     String?     @map("department_id")
+  department       Department? @relation(fields: [departmentId], references: [id])
+  isActive         Boolean     @default(true) @map("is_active")
+  twoFactorEnabled Boolean     @default(false) @map("two_factor_enabled")
+  lastLoginAt      DateTime?   @map("last_login_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+  deletedAt        DateTime?   @map("deleted_at")
+
+  sessions          UserSession[]
+  auditLogs         AuditLog[]
+  apiLogs           ApiLog[]
+  bantScores        BantScore[]
+  salesAgentProfile SalesAgent?
+
+  // CRM
+  leadsAssigned       Lead[]         @relation("LeadAssignedTo")
+  leadActivities      LeadActivity[] @relation("LeadActivityCreatedBy")
+  opportunitiesOwned  Opportunity[]  @relation("OpportunityOwner")
+  siteVisitsConducted SiteVisit[]    @relation("SiteVisitConductedBy")
+  tasksAssigned       Task[]         @relation("TaskAssignedTo")
+  interactions        Interaction[]  @relation("InteractionUser")
+
+  // Customers
+  customersAssigned Customer[] @relation("CustomerAssignedSalesRep")
+
+  // Inventory
+  unitPriceChanges  UnitPricingHistory[] @relation("UnitPriceChangedBy")
+  unitStatusChanges UnitStatusHistory[]  @relation("UnitStatusChangedBy")
+
+  // Sales
+  contractsPrepared          SalesContract[]     @relation("ContractPreparedBy")
+  contractAmendmentsApproved ContractAmendment[] @relation("ContractAmendmentApprovedBy")
+
+  // Finance
+  paymentsRecorded Payment[] @relation("PaymentRecordedBy")
+  refundsApproved  Refund[]  @relation("RefundApprovedBy")
+  invoicesIssued   Invoice[] @relation("InvoiceIssuedBy")
+
+  // Construction
+  constructionProgressUpdates UnitConstructionProgress[] @relation("ConstructionProgressUpdatedBy")
+  snaggingInspections         SnaggingInspection[]       @relation("SnaggingInspectedBy")
+  contractorAssignments       ContractorAssignment[]     @relation("ContractorAssignmentAssignedBy")
+
+  // Customer Experience
+  handoversConducted     Handover[]        @relation("HandoverConductedBy")
+  warrantyClaimsReviewed WarrantyClaim[]   @relation("WarrantyClaimReviewedBy")
+  complaintsAssigned     Complaint[]       @relation("ComplaintAssignedTo")
+  complaintUpdates       ComplaintUpdate[] @relation("ComplaintUpdateBy")
+  escalationsRaised      Escalation[]      @relation("EscalationFrom")
+  escalationsReceived    Escalation[]      @relation("EscalationTo")
+  clientHandoversAsConsultant ClientHandover[] @relation("ClientHandoverConsultant")
+  clientHandoversAsCxLead    ClientHandover[] @relation("ClientHandoverCxLead")
+  checklistRunsStarted       ChecklistRun[]   @relation("ChecklistRunStartedBy")
+  checklistStepsCompleted    ChecklistStepCompletion[] @relation("ChecklistStepCompletedBy")
+
+  // Facilities
+  maintenanceRequestsAssigned MaintenanceRequest[] @relation("MaintenanceRequestAssignedTo")
+
+  // Documents & Reporting
+  documentsUploaded   Document[]           @relation("DocumentUploadedBy")
+  dashboardsCreated   Dashboard[]          @relation("DashboardCreatedBy")
+  reportSubscriptions ReportSubscription[] @relation("ReportSubscriptionUser")
+
+  @@index([roleId])
+  @@index([departmentId])
+  @@map("users")
+}
+
+model UserSession {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  changes    Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// Lead capture, qualification, and opportunity/pipeline tracking.
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  NURTURING
+  NO_RESPONSE
+  QUALIFIED
+  REAL_OPPORTUNITY
+  UNQUALIFIED
+  CONVERTED
+}
+
+// Cached qualification verdict on Lead, and the status BantScore snapshots carry.
+enum QualificationStatus {
+  UNQUALIFIED
+  REVIEW
+  QUALIFIED
+}
+
+// Structured reason captured on disqualify, for the "lost/disqualified reasons" report.
+enum LeadLostReason {
+  NO_BUDGET
+  WRONG_TIMING
+  NOT_INTERESTED
+  UNRESPONSIVE
+  CHOSE_COMPETITOR
+  WRONG_FIT
+  COULD_NOT_SECURE_FINANCE
+  DUPLICATE
+  OTHER
+}
+
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFIED
+  SITE_VISIT
+  RESERVATION
+  NEGOTIATION
+  CONTRACT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum SiteVisitStatus {
+  SCHEDULED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+  RESCHEDULED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InteractionType {
+  CALL
+  EMAIL
+  MEETING
+  SITE_VISIT
+  SMS
+  WHATSAPP
+  NOTE
+}
+
+enum CampaignStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+model LeadSource {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@map("lead_sources")
+}
+
+model Campaign {
+  id        String         @id @default(cuid())
+  name      String
+  channel   String?
+  startDate DateTime?      @map("start_date")
+  endDate   DateTime?      @map("end_date")
+  budget    Decimal?       @db.Decimal(12, 2)
+  currency  String         @default("GHS")
+  status    CampaignStatus @default(PLANNED)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@map("campaigns")
+}
+
+model Lead {
+  id                String        @id @default(cuid())
+  customerId        String        @map("customer_id")
+  customer          Customer      @relation(fields: [customerId], references: [id])
+  sourceId          String        @map("source_id")
+  source            LeadSource    @relation(fields: [sourceId], references: [id])
+  campaignId        String?       @map("campaign_id")
+  campaign          Campaign?     @relation(fields: [campaignId], references: [id])
+  assignedToId      String?       @map("assigned_to")
+  assignedTo        User?         @relation("LeadAssignedTo", fields: [assignedToId], references: [id])
+  budgetMin         Decimal?      @map("budget_min") @db.Decimal(14, 2)
+  budgetMax         Decimal?      @map("budget_max") @db.Decimal(14, 2)
+  currency          String        @default("GHS")
+  preferredLocation String?       @map("preferred_location")
+  propertyTypeId    String?       @map("property_type_id")
+  propertyType      PropertyType? @relation(fields: [propertyTypeId], references: [id])
+  score             Int           @default(0)
+  status            LeadStatus    @default(NEW)
+  notes             String?
+
+  // BANT qualification — cached current verdict; full scoring history lives in BantScore.
+  bantScore           Int                 @default(0) @map("bant_score")
+  qualificationStatus QualificationStatus @default(UNQUALIFIED) @map("qualification_status")
+  qualifiedAt         DateTime?           @map("qualified_at")
+
+  // Real Opportunities stage (docs/real-opportunities-spec.md §1) — a Qualified lead that has
+  // also proven sustained, real engagement. suspectedPersona is a non-committal marketing tag
+  // captured during this phase to seed the future Marketing module (§3); distinct from the
+  // committed Customer.segment.
+  realOpportunityAt    DateTime? @map("real_opportunity_at")
+  suspectedPersona     String?   @map("suspected_persona")
+  suspectedPersonaNote String?   @map("suspected_persona_note")
+
+  // Set on disqualify — drives the "lost/disqualified reasons" report.
+  lostReason     LeadLostReason? @map("lost_reason")
+  lostReasonNote String?         @map("lost_reason_note")
+  disqualifiedAt DateTime?       @map("disqualified_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  activities       LeadActivity[]
+  opportunities    Opportunity[]
+  siteVisits       SiteVisit[]
+  bantScores       BantScore[]
+  behavioralScores BehavioralScore[]
+
+  @@index([customerId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([qualificationStatus])
+  @@index([bantScore])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+model LeadActivity {
+  id          String          @id @default(cuid())
+  leadId      String          @map("lead_id")
+  lead        Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        InteractionType
+  description String?
+  occurredAt  DateTime        @default(now()) @map("occurred_at")
+  createdById String          @map("created_by")
+  createdBy   User            @relation("LeadActivityCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@index([leadId])
+  @@map("lead_activities")
+}
+
+model Opportunity {
+  id                String           @id @default(cuid())
+  leadId            String?          @map("lead_id")
+  lead              Lead?            @relation(fields: [leadId], references: [id])
+  customerId        String           @map("customer_id")
+  customer          Customer         @relation(fields: [customerId], references: [id])
+  unitId            String?          @map("unit_id")
+  unit              Unit?            @relation(fields: [unitId], references: [id])
+  expectedValue     Decimal          @map("expected_value") @db.Decimal(14, 2)
+  currency          String           @default("GHS")
+  stage             OpportunityStage @default(PROSPECTING)
+  probability       Int              @default(0)
+  expectedCloseDate DateTime?        @map("expected_close_date")
+  closedAt          DateTime?        @map("closed_at")
+  ownerId           String           @map("owner_id")
+  owner             User             @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  deletedAt         DateTime?        @map("deleted_at")
+
+  siteVisits   SiteVisit[]
+  reservations Reservation[]
+  sale         Sale?
+
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([stage])
+  @@map("opportunities")
+}
+
+model SiteVisit {
+  id            String          @id @default(cuid())
+  opportunityId String?         @map("opportunity_id")
+  opportunity   Opportunity?    @relation(fields: [opportunityId], references: [id])
+  leadId        String?         @map("lead_id")
+  lead          Lead?           @relation(fields: [leadId], references: [id])
+  customerId    String          @map("customer_id")
+  customer      Customer        @relation(fields: [customerId], references: [id])
+  unitId        String?         @map("unit_id")
+  unit          Unit?           @relation(fields: [unitId], references: [id])
+  scheduledAt   DateTime        @map("scheduled_at")
+  conductedById String?         @map("conducted_by")
+  conductedBy   User?           @relation("SiteVisitConductedBy", fields: [conductedById], references: [id])
+  status        SiteVisitStatus @default(SCHEDULED)
+  feedback      String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@map("site_visits")
+}
+
+model Task {
+  id                String             @id @default(cuid())
+  title             String
+  description       String?
+  dueDate           DateTime?          @map("due_date")
+  status            TaskStatus         @default(OPEN)
+  priority          Priority           @default(MEDIUM)
+  assignedToId      String             @map("assigned_to")
+  assignedTo        User               @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+  completedAt       DateTime?          @map("completed_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([assignedToId])
+  @@index([status])
+  @@map("tasks")
+}
+
+model Interaction {
+  id                String            @id @default(cuid())
+  type              InteractionType
+  subject           String?
+  notes             String?
+  occurredAt        DateTime          @default(now()) @map("occurred_at")
+  userId            String            @map("user_id")
+  user              User              @relation("InteractionUser", fields: [userId], references: [id])
+  relatedEntityType RelatedEntityType @map("related_entity_type")
+  relatedEntityId   String            @map("related_entity_id")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([userId])
+  @@map("interactions")
+}
+
+// Customer master record and related profile data.
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum CustomerDocumentType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVERS_LICENSE
+  PROOF_OF_ADDRESS
+  KYC_FORM
+  OTHER
+}
+
+// Drives communication style, trust-building approach, and sales cadence
+// per the Sales Playbook's four buyer segment profiles.
+enum BuyerSegment {
+  LOCAL_RESIDENTIAL
+  DIASPORA
+  CORPORATE
+  INVESTOR
+}
+
+model Customer {
+  id                 String        @id @default(cuid())
+  firstName          String        @map("first_name")
+  lastName           String        @map("last_name")
+  email              String?       @unique
+  phone              String        @unique
+  nationality        String?
+  segment            BuyerSegment?
+  dateOfBirth        DateTime?     @map("date_of_birth")
+  kycStatus          KycStatus     @default(PENDING) @map("kyc_status")
+  assignedSalesRepId String?   @map("assigned_sales_rep_id")
+  assignedSalesRep   User?     @relation("CustomerAssignedSalesRep", fields: [assignedSalesRepId], references: [id])
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  addresses      CustomerAddress[]
+  documents      CustomerDocument[]
+  contacts       CustomerContact[]
+  preferences    CustomerPreference?
+  leads          Lead[]
+  opportunities  Opportunity[]
+  siteVisits     SiteVisit[]
+  reservations   Reservation[]
+  sales          Sale[]
+  complaints      Complaint[]
+  handovers       Handover[]
+  warrantyClaims  WarrantyClaim[]
+  feedback        Feedback[]
+  npsResponses    NPSResponse[]
+  clientHandovers ClientHandover[]
+  checklistRuns   ChecklistRun[]
+
+  @@index([assignedSalesRepId])
+  @@index([kycStatus])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String   @id @default(cuid())
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String?
+  line1      String
+  line2      String?
+  city       String
+  region     String?
+  country    String   @default("Ghana")
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+model CustomerDocument {
+  id         String               @id @default(cuid())
+  customerId String               @map("customer_id")
+  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       CustomerDocumentType
+  fileUrl    String               @map("file_url")
+  verifiedAt DateTime?            @map("verified_at")
+  expiresAt  DateTime?            @map("expires_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_documents")
+}
+
+model CustomerContact {
+  id           String   @id @default(cuid())
+  customerId   String   @map("customer_id")
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  relationship String
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  phone        String?
+  email        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+model CustomerPreference {
+  id                String   @id @default(cuid())
+  customerId        String   @unique @map("customer_id")
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  preferredContact  String?  @map("preferred_contact")
+  marketingOptIn    Boolean  @default(true) @map("marketing_opt_in")
+  preferredLanguage String   @default("en") @map("preferred_language")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("customer_preferences")
+}
+
+// Property development hierarchy: Development -> Block -> Floor -> Unit.
+
+enum UnitStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  UNDER_CONSTRUCTION
+  HANDED_OVER
+  BLOCKED
+}
+
+enum DevelopmentStatus {
+  PLANNING
+  CONSTRUCTION
+  SELLING
+  COMPLETED
+}
+
+model Development {
+  id                     String            @id @default(cuid())
+  name                   String
+  projectCode            String            @unique @map("project_code")
+  location               String
+  region                 String?
+  launchDate             DateTime?         @map("launch_date")
+  expectedCompletionDate DateTime?         @map("expected_completion_date")
+  status                 DevelopmentStatus @default(PLANNING)
+  totalUnits             Int               @default(0) @map("total_units")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+  deletedAt              DateTime?         @map("deleted_at")
+
+  phases             ProjectPhase[]
+  blocks             Block[]
+  units              Unit[]
+  constructionStages ConstructionStage[]
+  serviceCharges     ServiceCharge[]
+
+  @@index([status])
+  @@map("developments")
+}
+
+model ProjectPhase {
+  id            String      @id @default(cuid())
+  developmentId String      @map("development_id")
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
+  name          String
+  sequence      Int
+  startDate     DateTime?   @map("start_date")
+  endDate       DateTime?   @map("end_date")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([developmentId])
+  @@map("project_phases")
+}
+
+model PropertyType {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  bedrooms     Int
+  bathrooms    Int
+  builtAreaSqm Decimal  @map("built_area_sqm") @db.Decimal(8, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  units Unit[]
+  leads Lead[]
+
+  @@index([bedrooms])
+  @@map("property_types")
+}
+
+model Block {
+  id            String      @id @default(cuid())
+  developmentId String      @map("development_id")
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
+  name          String
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  floors Floor[]
+  units  Unit[]
+
+  @@unique([developmentId, name])
+  @@map("blocks")
+}
+
+model Floor {
+  id        String   @id @default(cuid())
+  blockId   String   @map("block_id")
+  block     Block    @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  level     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  units Unit[]
+
+  @@unique([blockId, level])
+  @@map("floors")
+}
+
+model Unit {
+  id             String       @id @default(cuid())
+  developmentId  String       @map("development_id")
+  development    Development  @relation(fields: [developmentId], references: [id])
+  blockId        String?      @map("block_id")
+  block          Block?       @relation(fields: [blockId], references: [id])
+  floorId        String?      @map("floor_id")
+  floor          Floor?       @relation(fields: [floorId], references: [id])
+  propertyTypeId String       @map("property_type_id")
+  propertyType   PropertyType @relation(fields: [propertyTypeId], references: [id])
+  unitNumber     String       @map("unit_number")
+  currentPrice   Decimal      @map("current_price") @db.Decimal(14, 2)
+  currency       String       @default("GHS")
+  status         UnitStatus   @default(AVAILABLE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  deletedAt      DateTime?    @map("deleted_at")
+
+  featureMappings      UnitFeatureMapping[]
+  pricingHistory       UnitPricingHistory[]
+  statusHistory        UnitStatusHistory[]
+  opportunities        Opportunity[]
+  siteVisits           SiteVisit[]
+  reservations         Reservation[]
+  sales                Sale[]
+  constructionProgress UnitConstructionProgress[]
+  snaggingInspections  SnaggingInspection[]
+  complaints           Complaint[]
+  handovers            Handover[]
+  warrantyClaims       WarrantyClaim[]
+  assets               Asset[]
+  serviceCharges       ServiceCharge[]
+
+  @@unique([developmentId, unitNumber])
+  @@index([status])
+  @@index([propertyTypeId])
+  @@map("units")
+}
+
+model UnitFeature {
+  id   String @id @default(cuid())
+  name String @unique
+
+  featureMappings UnitFeatureMapping[]
+
+  @@map("unit_features")
+}
+
+model UnitFeatureMapping {
+  id        String      @id @default(cuid())
+  unitId    String      @map("unit_id")
+  unit      Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  featureId String      @map("feature_id")
+  feature   UnitFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, featureId])
+  @@map("unit_feature_mappings")
+}
+
+model UnitPricingHistory {
+  id          String   @id @default(cuid())
+  unitId      String   @map("unit_id")
+  unit        Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  price       Decimal  @db.Decimal(14, 2)
+  currency    String   @default("GHS")
+  effectiveAt DateTime @default(now()) @map("effective_at")
+  changedById String   @map("changed_by")
+  changedBy   User     @relation("UnitPriceChangedBy", fields: [changedById], references: [id])
+  reason      String?
+
+  @@index([unitId])
+  @@map("unit_pricing_history")
+}
+
+model UnitStatusHistory {
+  id          String      @id @default(cuid())
+  unitId      String      @map("unit_id")
+  unit        Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  fromStatus  UnitStatus? @map("from_status")
+  toStatus    UnitStatus  @map("to_status")
+  changedAt   DateTime    @default(now()) @map("changed_at")
+  changedById String      @map("changed_by")
+  changedBy   User        @relation("UnitStatusChangedBy", fields: [changedById], references: [id])
+  notes       String?
+
+  @@index([unitId])
+  @@map("unit_status_history")
+}
+
+// Reservations, sales, contracts, agents and commissions.
+
+enum ReservationStatus {
+  ACTIVE
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+enum SaleStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DEFAULTED
+}
+
+enum ContractStatus {
+  DRAFT
+  SENT
+  SIGNED
+  ACTIVE
+  AMENDED
+  TERMINATED
+  COMPLETED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  VOID
+}
+
+model Reservation {
+  id             String            @id @default(cuid())
+  opportunityId  String?           @map("opportunity_id")
+  opportunity    Opportunity?      @relation(fields: [opportunityId], references: [id])
+  unitId         String            @map("unit_id")
+  unit           Unit              @relation(fields: [unitId], references: [id])
+  customerId     String            @map("customer_id")
+  customer       Customer          @relation(fields: [customerId], references: [id])
+  reservationFee Decimal           @map("reservation_fee") @db.Decimal(14, 2)
+  currency       String            @default("GHS")
+  reservedAt     DateTime          @default(now()) @map("reserved_at")
+  expiryDate     DateTime          @map("expiry_date")
+  status         ReservationStatus @default(ACTIVE)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  extensions ReservationExtension[]
+  sale       Sale?
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("reservations")
+}
+
+model ReservationExtension {
+  id             String      @id @default(cuid())
+  reservationId  String      @map("reservation_id")
+  reservation    Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  previousExpiry DateTime    @map("previous_expiry")
+  newExpiry      DateTime    @map("new_expiry")
+  reason         String?
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  @@index([reservationId])
+  @@map("reservation_extensions")
+}
+
+model Sale {
+  id            String       @id @default(cuid())
+  reservationId String?      @unique @map("reservation_id")
+  reservation   Reservation? @relation(fields: [reservationId], references: [id])
+  opportunityId String?      @unique @map("opportunity_id")
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  unitId        String       @map("unit_id")
+  unit          Unit         @relation(fields: [unitId], references: [id])
+  customerId    String       @map("customer_id")
+  customer      Customer     @relation(fields: [customerId], references: [id])
+  salePrice     Decimal      @map("sale_price") @db.Decimal(14, 2)
+  currency      String       @default("GHS")
+  saleDate      DateTime     @default(now()) @map("sale_date")
+  status        SaleStatus   @default(PENDING)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  deletedAt     DateTime?    @map("deleted_at")
+
+  contract       SalesContract?
+  commissions    Commission[]
+  paymentPlan    PaymentPlan?
+  invoices       Invoice[]
+  clientHandover ClientHandover?
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("sales")
+}
+
+model SalesContract {
+  id             String         @id @default(cuid())
+  saleId         String         @unique @map("sale_id")
+  sale           Sale           @relation(fields: [saleId], references: [id])
+  contractNumber String         @unique @map("contract_number")
+  status         ContractStatus @default(DRAFT)
+  documentUrl    String?        @map("document_url")
+  preparedById   String?        @map("prepared_by")
+  preparedBy     User?          @relation("ContractPreparedBy", fields: [preparedById], references: [id])
+  sentAt         DateTime?      @map("sent_at")
+  signedAt       DateTime?      @map("signed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  amendments ContractAmendment[]
+
+  @@index([status])
+  @@map("sales_contracts")
+}
+
+model ContractAmendment {
+  id           String        @id @default(cuid())
+  contractId   String        @map("contract_id")
+  contract     SalesContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  description  String
+  approvedById String?       @map("approved_by")
+  approvedBy   User?         @relation("ContractAmendmentApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?     @map("approved_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  @@index([contractId])
+  @@map("contract_amendments")
+}
+
+model SalesAgent {
+  id             String   @id @default(cuid())
+  userId         String   @unique @map("user_id")
+  user           User     @relation(fields: [userId], references: [id])
+  agentCode      String   @unique @map("agent_code")
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  commissions Commission[]
+
+  @@map("sales_agents")
+}
+
+model Commission {
+  id         String           @id @default(cuid())
+  saleId     String           @map("sale_id")
+  sale       Sale             @relation(fields: [saleId], references: [id])
+  agentId    String           @map("agent_id")
+  agent      SalesAgent       @relation(fields: [agentId], references: [id])
+  amount     Decimal          @db.Decimal(14, 2)
+  currency   String           @default("GHS")
+  status     CommissionStatus @default(PENDING)
+  approvedAt DateTime?        @map("approved_at")
+  paidAt     DateTime?        @map("paid_at")
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  @@index([agentId])
+  @@index([status])
+  @@map("commissions")
+}
+
+// Payment plans, payments, invoices, refunds and penalties.
+// Payment is intentionally generic: method + reference only. Gateway integration
+// (Paystack/Flutterwave/Mobile Money APIs, webhook verification, idempotency,
+// reconciliation) is owned by the Finance module's service layer, not this schema.
+
+enum PaymentPlanStatus {
+  ACTIVE
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+enum PaymentScheduleStatus {
+  PENDING
+  PAID
+  PARTIAL
+  OVERDUE
+  WAIVED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum PenaltyStatus {
+  PENDING
+  WAIVED
+  PAID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  PARTIAL
+  OVERDUE
+  VOID
+}
+
+model PaymentPlan {
+  id          String            @id @default(cuid())
+  saleId      String            @unique @map("sale_id")
+  sale        Sale              @relation(fields: [saleId], references: [id])
+  totalAmount Decimal           @map("total_amount") @db.Decimal(14, 2)
+  currency    String            @default("GHS")
+  downPayment Decimal           @map("down_payment") @db.Decimal(14, 2)
+  status      PaymentPlanStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  schedules PaymentSchedule[]
+
+  @@index([status])
+  @@map("payment_plans")
+}
+
+model PaymentSchedule {
+  id            String                @id @default(cuid())
+  paymentPlanId String                @map("payment_plan_id")
+  paymentPlan   PaymentPlan           @relation(fields: [paymentPlanId], references: [id], onDelete: Cascade)
+  installmentNo Int                   @map("installment_no")
+  dueDate       DateTime              @map("due_date")
+  amountDue     Decimal               @map("amount_due") @db.Decimal(14, 2)
+  currency      String                @default("GHS")
+  status        PaymentScheduleStatus @default(PENDING)
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  allocations PaymentAllocation[]
+  penalties   Penalty[]
+
+  @@unique([paymentPlanId, installmentNo])
+  @@index([status])
+  @@index([dueDate])
+  @@map("payment_schedules")
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  customerId   String        @map("customer_id")
+  amount       Decimal       @db.Decimal(14, 2)
+  currency     String        @default("GHS")
+  method       PaymentMethod
+  reference    String?
+  paidAt       DateTime      @default(now()) @map("paid_at")
+  recordedById String?       @map("recorded_by")
+  recordedBy   User?         @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  allocations PaymentAllocation[]
+  receipt     Receipt?
+  refunds     Refund[]
+
+  @@index([customerId])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id                String          @id @default(cuid())
+  paymentId         String          @map("payment_id")
+  payment           Payment         @relation(fields: [paymentId], references: [id])
+  paymentScheduleId String          @map("payment_schedule_id")
+  paymentSchedule   PaymentSchedule @relation(fields: [paymentScheduleId], references: [id])
+  amount            Decimal         @db.Decimal(14, 2)
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([paymentId])
+  @@index([paymentScheduleId])
+  @@map("payment_allocations")
+}
+
+model Receipt {
+  id          String   @id @default(cuid())
+  paymentId   String   @unique @map("payment_id")
+  payment     Payment  @relation(fields: [paymentId], references: [id])
+  receiptNo   String   @unique @map("receipt_no")
+  issuedAt    DateTime @default(now()) @map("issued_at")
+  documentUrl String?  @map("document_url")
+
+  @@map("receipts")
+}
+
+model Refund {
+  id           String       @id @default(cuid())
+  paymentId    String       @map("payment_id")
+  payment      Payment      @relation(fields: [paymentId], references: [id])
+  amount       Decimal      @db.Decimal(14, 2)
+  currency     String       @default("GHS")
+  reason       String
+  status       RefundStatus @default(REQUESTED)
+  approvedById String?      @map("approved_by")
+  approvedBy   User?        @relation("RefundApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?    @map("approved_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("refunds")
+}
+
+model Penalty {
+  id                String          @id @default(cuid())
+  paymentScheduleId String          @map("payment_schedule_id")
+  paymentSchedule   PaymentSchedule @relation(fields: [paymentScheduleId], references: [id])
+  amount            Decimal         @db.Decimal(14, 2)
+  currency          String          @default("GHS")
+  reason            String
+  status            PenaltyStatus   @default(PENDING)
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  @@index([paymentScheduleId])
+  @@map("penalties")
+}
+
+model Invoice {
+  id         String        @id @default(cuid())
+  saleId     String?       @map("sale_id")
+  sale       Sale?         @relation(fields: [saleId], references: [id])
+  invoiceNo  String        @unique @map("invoice_no")
+  amount     Decimal       @db.Decimal(14, 2)
+  currency   String        @default("GHS")
+  taxAmount  Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  status     InvoiceStatus @default(DRAFT)
+  issuedById String?       @map("issued_by")
+  issuedBy   User?         @relation("InvoiceIssuedBy", fields: [issuedById], references: [id])
+  issuedAt   DateTime?     @map("issued_at")
+  dueDate    DateTime?     @map("due_date")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([saleId])
+  @@map("invoices")
+}
+
+// Construction progress, snagging inspections, and contractors.
+
+enum ConstructionStageStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  DELAYED
+  COMPLETED
+}
+
+enum SnaggingStatus {
+  OPEN
+  ASSIGNED
+  FIXED
+  VERIFIED
+  REJECTED
+}
+
+model ConstructionStage {
+  id            String                  @id @default(cuid())
+  developmentId String                  @map("development_id")
+  development   Development             @relation(fields: [developmentId], references: [id])
+  name          String
+  sequence      Int
+  plannedStart  DateTime?               @map("planned_start")
+  plannedEnd    DateTime?               @map("planned_end")
+  actualStart   DateTime?               @map("actual_start")
+  actualEnd     DateTime?               @map("actual_end")
+  status        ConstructionStageStatus @default(NOT_STARTED)
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+
+  unitProgress          UnitConstructionProgress[]
+  contractorAssignments ContractorAssignment[]
+
+  @@index([developmentId])
+  @@index([status])
+  @@map("construction_stages")
+}
+
+model UnitConstructionProgress {
+  id                  String            @id @default(cuid())
+  unitId              String            @map("unit_id")
+  unit                Unit              @relation(fields: [unitId], references: [id])
+  constructionStageId String            @map("construction_stage_id")
+  constructionStage   ConstructionStage @relation(fields: [constructionStageId], references: [id])
+  percentComplete     Int               @default(0) @map("percent_complete")
+  updatedById         String?           @map("updated_by")
+  updatedBy           User?             @relation("ConstructionProgressUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  @@unique([unitId, constructionStageId])
+  @@index([unitId])
+  @@map("unit_construction_progress")
+}
+
+model SnaggingInspection {
+  id            String    @id @default(cuid())
+  unitId        String    @map("unit_id")
+  unit          Unit      @relation(fields: [unitId], references: [id])
+  inspectedById String    @map("inspected_by")
+  inspectedBy   User      @relation("SnaggingInspectedBy", fields: [inspectedById], references: [id])
+  inspectedAt   DateTime  @default(now()) @map("inspected_at")
+  signedOffAt   DateTime? @map("signed_off_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  items SnaggingItem[]
+
+  @@index([unitId])
+  @@map("snagging_inspections")
+}
+
+model SnaggingItem {
+  id                   String             @id @default(cuid())
+  snaggingInspectionId String             @map("snagging_inspection_id")
+  snaggingInspection   SnaggingInspection @relation(fields: [snaggingInspectionId], references: [id], onDelete: Cascade)
+  category             String
+  description          String
+  photoUrl             String?            @map("photo_url")
+  status               SnaggingStatus     @default(OPEN)
+  assignedContractorId String?            @map("assigned_contractor_id")
+  assignedContractor   Contractor?        @relation(fields: [assignedContractorId], references: [id])
+  fixedAt              DateTime?          @map("fixed_at")
+  verifiedAt           DateTime?          @map("verified_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  @@index([snaggingInspectionId])
+  @@index([status])
+  @@map("snagging_items")
+}
+
+model Contractor {
+  id          String   @id @default(cuid())
+  companyName String   @map("company_name")
+  contactName String?  @map("contact_name")
+  phone       String?
+  email       String?
+  specialty   String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  snaggingItems         SnaggingItem[]
+  contractorAssignments ContractorAssignment[]
+  workOrders            WorkOrder[]
+
+  @@map("contractors")
+}
+
+model ContractorAssignment {
+  id                  String            @id @default(cuid())
+  contractorId        String            @map("contractor_id")
+  contractor          Contractor        @relation(fields: [contractorId], references: [id])
+  constructionStageId String            @map("construction_stage_id")
+  constructionStage   ConstructionStage @relation(fields: [constructionStageId], references: [id])
+  assignedById        String?           @map("assigned_by")
+  assignedBy          User?             @relation("ContractorAssignmentAssignedBy", fields: [assignedById], references: [id])
+  startDate           DateTime?         @map("start_date")
+  endDate             DateTime?         @map("end_date")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  @@index([contractorId])
+  @@index([constructionStageId])
+  @@map("contractor_assignments")
+}
+
+// Handover, warranty, complaints/SLA, escalations, and work orders.
+
+enum HandoverStatus {
+  SCHEDULED
+  INSPECTION_PENDING
+  COMPLETED
+  CANCELLED
+}
+
+// The Sales -> CX relationship handoff (Sales Playbook §6) — distinct from
+// HandoverStatus above, which is the physical unit handover months later
+// (CX Playbook Stage 04). This one fires the moment a deal closes.
+enum ClientHandoverStatus {
+  PENDING_ACK
+  ACKNOWLEDGED
+  INTRODUCED
+  WELCOMED
+  COMPLETE
+}
+
+model ClientHandover {
+  id           String               @id @default(cuid())
+  saleId       String               @unique @map("sale_id")
+  sale         Sale                 @relation(fields: [saleId], references: [id])
+  customerId   String               @map("customer_id")
+  customer     Customer             @relation(fields: [customerId], references: [id])
+  consultantId String               @map("consultant_id")
+  consultant   User                 @relation("ClientHandoverConsultant", fields: [consultantId], references: [id])
+  cxLeadId     String?              @map("cx_lead_id")
+  cxLead       User?                @relation("ClientHandoverCxLead", fields: [cxLeadId], references: [id])
+  status       ClientHandoverStatus @default(PENDING_ACK)
+
+  dossierComplete Boolean @default(false) @map("dossier_complete")
+  dossierNote     String? @map("dossier_note")
+
+  notifiedAt           DateTime  @default(now()) @map("notified_at")
+  acknowledgedAt       DateTime? @map("acknowledged_at")
+  introductionLoggedAt DateTime? @map("introduction_logged_at")
+  welcomeSentAt        DateTime? @map("welcome_sent_at")
+
+  qualityScore Int?    @map("quality_score")
+  qualityNote  String? @map("quality_note")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([cxLeadId])
+  @@map("client_handovers")
+}
+
+enum WarrantyClaimStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  RESOLVED
+}
+
+enum ComplaintStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+model Handover {
+  id            String         @id @default(cuid())
+  unitId        String         @map("unit_id")
+  unit          Unit           @relation(fields: [unitId], references: [id])
+  customerId    String         @map("customer_id")
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  status        HandoverStatus @default(SCHEDULED)
+  scheduledAt   DateTime?      @map("scheduled_at")
+  conductedById String?        @map("conducted_by")
+  conductedBy   User?          @relation("HandoverConductedBy", fields: [conductedById], references: [id])
+  completedAt   DateTime?      @map("completed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  warrantyClaims WarrantyClaim[]
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("handovers")
+}
+
+model WarrantyClaim {
+  id           String              @id @default(cuid())
+  unitId       String              @map("unit_id")
+  unit         Unit                @relation(fields: [unitId], references: [id])
+  customerId   String              @map("customer_id")
+  customer     Customer            @relation(fields: [customerId], references: [id])
+  handoverId   String?             @map("handover_id")
+  handover     Handover?           @relation(fields: [handoverId], references: [id])
+  description  String
+  status       WarrantyClaimStatus @default(SUBMITTED)
+  reviewedById String?             @map("reviewed_by")
+  reviewedBy   User?               @relation("WarrantyClaimReviewedBy", fields: [reviewedById], references: [id])
+  resolvedAt   DateTime?           @map("resolved_at")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  @@index([unitId])
+  @@index([status])
+  @@map("warranty_claims")
+}
+
+model ComplaintCategory {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  defaultPriority    Priority @default(MEDIUM) @map("default_priority")
+  responseSlaHours   Int      @default(24) @map("response_sla_hours")
+  resolutionSlaHours Int      @default(72) @map("resolution_sla_hours")
+
+  complaints Complaint[]
+
+  @@map("complaint_categories")
+}
+
+model Complaint {
+  id           String            @id @default(cuid())
+  customerId   String            @map("customer_id")
+  customer     Customer          @relation(fields: [customerId], references: [id])
+  unitId       String?           @map("unit_id")
+  unit         Unit?             @relation(fields: [unitId], references: [id])
+  categoryId   String            @map("category_id")
+  category     ComplaintCategory @relation(fields: [categoryId], references: [id])
+  subject      String
+  description  String
+  priority     Priority          @default(MEDIUM)
+  status       ComplaintStatus   @default(OPEN)
+  assignedToId String?           @map("assigned_to")
+  assignedTo   User?             @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+  openedAt     DateTime          @default(now()) @map("opened_at")
+  resolvedAt   DateTime?         @map("resolved_at")
+  closedAt     DateTime?         @map("closed_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  updates     ComplaintUpdate[]
+  attachments ComplaintAttachment[]
+  sla         ComplaintSLA?
+  escalations Escalation[]
+  workOrders  WorkOrder[]
+
+  @@index([customerId])
+  @@index([unitId])
+  @@index([status])
+  @@index([assignedToId])
+  @@map("complaints")
+}
+
+model ComplaintUpdate {
+  id          String    @id @default(cuid())
+  complaintId String    @map("complaint_id")
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  note        String
+  updatedById String    @map("updated_by")
+  updatedBy   User      @relation("ComplaintUpdateBy", fields: [updatedById], references: [id])
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([complaintId])
+  @@map("complaint_updates")
+}
+
+model ComplaintAttachment {
+  id          String    @id @default(cuid())
+  complaintId String    @map("complaint_id")
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  fileUrl     String    @map("file_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([complaintId])
+  @@map("complaint_attachments")
+}
+
+model ComplaintSLA {
+  id                 String    @id @default(cuid())
+  complaintId        String    @unique @map("complaint_id")
+  complaint          Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  responseDueAt      DateTime  @map("response_due_at")
+  resolutionDueAt    DateTime  @map("resolution_due_at")
+  respondedAt        DateTime? @map("responded_at")
+  resolvedAt         DateTime? @map("resolved_at")
+  responseBreached   Boolean   @default(false) @map("response_breached")
+  resolutionBreached Boolean   @default(false) @map("resolution_breached")
+
+  @@map("complaint_slas")
+}
+
+model Escalation {
+  id              String           @id @default(cuid())
+  complaintId     String           @map("complaint_id")
+  complaint       Complaint        @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  reason          String
+  escalatedFromId String           @map("escalated_from")
+  escalatedFrom   User             @relation("EscalationFrom", fields: [escalatedFromId], references: [id])
+  escalatedToId   String           @map("escalated_to")
+  escalatedTo     User             @relation("EscalationTo", fields: [escalatedToId], references: [id])
+  status          EscalationStatus @default(OPEN)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  resolvedAt      DateTime?        @map("resolved_at")
+
+  @@index([complaintId])
+  @@map("escalations")
+}
+
+model WorkOrder {
+  id                   String          @id @default(cuid())
+  complaintId          String?         @map("complaint_id")
+  complaint            Complaint?      @relation(fields: [complaintId], references: [id])
+  assignedContractorId String?         @map("assigned_contractor_id")
+  assignedContractor   Contractor?     @relation(fields: [assignedContractorId], references: [id])
+  description          String
+  status               WorkOrderStatus @default(OPEN)
+  targetCompletionDate DateTime?       @map("target_completion_date")
+  completedAt          DateTime?       @map("completed_at")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  @@index([complaintId])
+  @@index([status])
+  @@map("work_orders")
+}
+
+// Facilities & asset management, maintenance, and service charge billing.
+
+enum AssetStatus {
+  OPERATIONAL
+  UNDER_MAINTENANCE
+  RETIRED
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+enum ServiceChargeStatus {
+  PENDING
+  PAID
+  OVERDUE
+  WAIVED
+}
+
+model AssetCategory {
+  id   String @id @default(cuid())
+  name String @unique
+
+  assets Asset[]
+
+  @@map("asset_categories")
+}
+
+model Asset {
+  id             String        @id @default(cuid())
+  unitId         String?       @map("unit_id")
+  unit           Unit?         @relation(fields: [unitId], references: [id])
+  categoryId     String        @map("category_id")
+  category       AssetCategory @relation(fields: [categoryId], references: [id])
+  name           String
+  qrCode         String?       @unique @map("qr_code")
+  status         AssetStatus   @default(OPERATIONAL)
+  warrantyExpiry DateTime?     @map("warranty_expiry")
+  installedAt    DateTime?     @map("installed_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  maintenanceRequests  MaintenanceRequest[]
+  maintenanceSchedules MaintenanceSchedule[]
+
+  @@index([unitId])
+  @@index([categoryId])
+  @@index([status])
+  @@map("assets")
+}
+
+model ServiceProvider {
+  id          String   @id @default(cuid())
+  companyName String   @map("company_name")
+  contactName String?  @map("contact_name")
+  phone       String?
+  email       String?
+  specialty   String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  maintenanceRequests  MaintenanceRequest[]
+  maintenanceSchedules MaintenanceSchedule[]
+
+  @@map("service_providers")
+}
+
+model MaintenanceRequest {
+  id                String            @id @default(cuid())
+  assetId           String            @map("asset_id")
+  asset             Asset             @relation(fields: [assetId], references: [id])
+  description       String
+  status            MaintenanceStatus @default(SCHEDULED)
+  assignedToId      String?           @map("assigned_to")
+  assignedTo        User?             @relation("MaintenanceRequestAssignedTo", fields: [assignedToId], references: [id])
+  serviceProviderId String?           @map("service_provider_id")
+  serviceProvider   ServiceProvider?  @relation(fields: [serviceProviderId], references: [id])
+  scheduledAt       DateTime?         @map("scheduled_at")
+  completedAt       DateTime?         @map("completed_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  @@index([assetId])
+  @@index([status])
+  @@map("maintenance_requests")
+}
+
+model MaintenanceSchedule {
+  id                String           @id @default(cuid())
+  assetId           String           @map("asset_id")
+  asset             Asset            @relation(fields: [assetId], references: [id])
+  serviceProviderId String?          @map("service_provider_id")
+  serviceProvider   ServiceProvider? @relation(fields: [serviceProviderId], references: [id])
+  frequency         String
+  nextDueAt         DateTime         @map("next_due_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@index([assetId])
+  @@index([nextDueAt])
+  @@map("maintenance_schedules")
+}
+
+model ServiceCharge {
+  id            String              @id @default(cuid())
+  unitId        String              @map("unit_id")
+  unit          Unit                @relation(fields: [unitId], references: [id])
+  developmentId String              @map("development_id")
+  development   Development         @relation(fields: [developmentId], references: [id])
+  periodStart   DateTime            @map("period_start")
+  periodEnd     DateTime            @map("period_end")
+  amount        Decimal             @db.Decimal(14, 2)
+  currency      String              @default("GHS")
+  status        ServiceChargeStatus @default(PENDING)
+  dueDate       DateTime            @map("due_date")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  @@index([unitId])
+  @@index([status])
+  @@map("service_charges")
+}
+
+// Generic documents, e-sign templates, feedback/NPS, and saved reports.
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Document {
+  id                String            @id @default(cuid())
+  relatedEntityType RelatedEntityType @map("related_entity_type")
+  relatedEntityId   String            @map("related_entity_id")
+  name              String
+  fileUrl           String            @map("file_url")
+  uploadedById      String            @map("uploaded_by")
+  uploadedBy        User              @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([uploadedById])
+  @@map("documents")
+}
+
+model DocumentTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  fileUrl     String   @map("file_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("document_templates")
+}
+
+model Feedback {
+  id                String             @id @default(cuid())
+  customerId        String             @map("customer_id")
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+  rating            Int?
+  comment           String?
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([relatedEntityType, relatedEntityId])
+  @@map("feedback")
+}
+
+model Survey {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  npsResponses NPSResponse[]
+
+  @@map("surveys")
+}
+
+model NPSResponse {
+  id         String   @id @default(cuid())
+  surveyId   String   @map("survey_id")
+  survey     Survey   @relation(fields: [surveyId], references: [id])
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
+  score      Int
+  comment    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([surveyId])
+  @@index([customerId])
+  @@map("nps_responses")
+}
+
+model Dashboard {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  config      Json
+  createdById String?  @map("created_by")
+  createdBy   User?    @relation("DashboardCreatedBy", fields: [createdById], references: [id])
+  isShared    Boolean  @default(false) @map("is_shared")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  reportSubscriptions ReportSubscription[]
+
+  @@map("dashboards")
+}
+
+model ReportSubscription {
+  id          String          @id @default(cuid())
+  dashboardId String          @map("dashboard_id")
+  dashboard   Dashboard       @relation(fields: [dashboardId], references: [id])
+  userId      String          @map("user_id")
+  user        User            @relation("ReportSubscriptionUser", fields: [userId], references: [id])
+  frequency   ReportFrequency @default(WEEKLY)
+  isActive    Boolean         @default(true) @map("is_active")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@unique([dashboardId, userId])
+  @@map("report_subscriptions")
+}
+
+// BANT-Plus lead scoring (Devtraco's 5-pillar framework: Budget, Authority, Need,
+// Timeline, Fit) and behavioral scoring, plus the model registry behind the scoring
+// engine. Lead.bantScore/qualificationStatus (in 02-crm.prisma) is the cached current
+// verdict; BantScore holds the full per-factor breakdown and history of how that
+// verdict was reached.
+
+model BantScore {
+  id               String              @id @default(cuid())
+  leadId           String              @map("lead_id")
+  lead             Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId           String?             @map("user_id")
+  user             User?               @relation(fields: [userId], references: [id])
+  budgetScore      Int                 @default(0) @map("budget_score")
+  authorityScore   Int                 @default(0) @map("authority_score")
+  needScore        Int                 @default(0) @map("need_score")
+  timelineScore    Int                 @default(0) @map("timeline_score")
+  fitScore         Int                 @default(0) @map("fit_score")
+  totalScore       Int                 @default(0) @map("total_score")
+  status           QualificationStatus @default(UNQUALIFIED)
+  agentAdjustments Json?               @map("agent_adjustments")
+  notes            String?
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([userId])
+  @@index([totalScore])
+  @@index([status])
+  @@map("bant_scores")
+}
+
+model BehavioralScore {
+  id               String    @id @default(cuid())
+  leadId           String    @map("lead_id")
+  lead             Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  emailOpens       Int       @default(0) @map("email_opens")
+  emailClicks      Int       @default(0) @map("email_clicks")
+  siteVisits       Int       @default(0) @map("site_visits")
+  documentViews    Int       @default(0) @map("document_views")
+  meetingsAttended Int       @default(0) @map("meetings_attended")
+  callsCompleted   Int       @default(0) @map("calls_completed")
+  totalScore       Int       @default(0) @map("total_score")
+  engagementLevel  String    @default("LOW") @map("engagement_level")
+  lastActivityAt   DateTime? @map("last_activity_at")
+  scoreDate        DateTime  @default(now()) @map("score_date")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([totalScore])
+  @@index([scoreDate])
+  @@map("behavioral_scores")
+}
+
+model ModelWeight {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  modelType     String    @default("LOGISTIC_REGRESSION") @map("model_type")
+  feature       String
+  weight        Float     @default(0)
+  intercept     Float?    @default(0)
+  version       String    @default("1.0.0")
+  isActive      Boolean   @default(true) @map("is_active")
+  lastTrainedAt DateTime? @map("last_trained_at")
+  sampleCount   Int       @default(0) @map("sample_count")
+  accuracy      Float?    @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  trainingHistory ModelTrainingHistory[]
+
+  @@index([name])
+  @@index([isActive])
+  @@index([modelType])
+  @@map("model_weights")
+}
+
+model ModelTrainingHistory {
+  id            String      @id @default(cuid())
+  modelWeightId String      @map("model_weight_id")
+  modelWeight   ModelWeight @relation(fields: [modelWeightId], references: [id])
+  trainedAt     DateTime    @default(now()) @map("trained_at")
+  sampleSize    Int         @map("sample_size")
+  accuracy      Float
+  precision     Float
+  recall        Float
+  f1Score       Float       @map("f1_score")
+  features      Json
+  notes         String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([modelWeightId])
+  @@index([trainedAt])
+  @@map("model_training_history")
+}
+
+// Outbound event webhooks and API request audit logging.
+// Distinct from Payment (06-finance.prisma): these are the CRM's own outbound
+// notifications (e.g. "lead.created" -> external system), not inbound payment
+// gateway callbacks — that integration still belongs to the Finance module.
+
+model Webhook {
+  id              String    @id @default(cuid())
+  name            String
+  url             String
+  event           String
+  method          String    @default("POST")
+  headers         Json?
+  secret          String?
+  isActive        Boolean   @default(true) @map("is_active")
+  lastTriggeredAt DateTime? @map("last_triggered_at")
+  triggerCount    Int       @default(0) @map("trigger_count")
+  failureCount    Int       @default(0) @map("failure_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  webhookLogs WebhookLog[]
+
+  @@index([event])
+  @@index([isActive])
+  @@map("webhooks")
+}
+
+model WebhookLog {
+  id           String   @id @default(cuid())
+  webhookId    String   @map("webhook_id")
+  webhook      Webhook  @relation(fields: [webhookId], references: [id])
+  payload      Json
+  responseCode Int?     @map("response_code")
+  responseBody String?  @map("response_body")
+  error        String?
+  durationMs   Int?     @map("duration_ms")
+  status       String   @default("PENDING")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([webhookId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
+model ApiLog {
+  id             String   @id @default(cuid())
+  userId         String?  @map("user_id")
+  user           User?    @relation(fields: [userId], references: [id])
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  method         String
+  path           String
+  queryParams    Json?    @map("query_params")
+  requestBody    Json?    @map("request_body")
+  responseStatus Int?     @map("response_status")
+  durationMs     Int?     @map("duration_ms")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([path])
+  @@index([method])
+  @@index([createdAt])
+  @@index([responseStatus])
+  @@map("api_logs")
+}
+
+// Generic operational checklist engine, seeded from Devtraco's "CX Workflow: State 2
+// Operational Playbook" (11 tabs, each with grouped Process Execution steps and Quality &
+// Control checks). One ChecklistTemplate per playbook tab; ChecklistRun is one instance of a
+// template worked against a specific client (and optionally a more specific record — a Sale,
+// Complaint, Handover, SiteVisit, or SnaggingInspection — via the existing polymorphic
+// relatedEntityType/relatedEntityId pair). Unticked QUALITY_CHECK steps are the playbook's
+// ⚠️ notification triggers — computed as open flags at read time rather than a separate table.
+
+enum ChecklistStepKind {
+  PROCESS
+  QUALITY_CHECK
+}
+
+model ChecklistTemplate {
+  id               String   @id @default(cuid())
+  stageNumber      Int      @unique @map("stage_number")
+  title            String
+  goal             String
+  trigger          String
+  owner            String
+  sla              String
+  isOpenDesignItem Boolean  @default(false) @map("is_open_design_item")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  steps ChecklistStep[]
+  runs  ChecklistRun[]
+
+  @@map("checklist_templates")
+}
+
+model ChecklistStep {
+  id         String            @id @default(cuid())
+  templateId String            @map("template_id")
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  groupLabel String            @map("group_label")
+  order      Int
+  kind       ChecklistStepKind
+  label      String
+
+  // Only set for QUALITY_CHECK steps — mirrors the playbook's ⚠️ notification trigger.
+  notificationRecipient String? @map("notification_recipient")
+  notificationAction    String? @map("notification_action")
+
+  // The playbook's "Cross-Departmental Interaction" block is stated once per numbered step
+  // group (e.g. "Step 1.1"), not per individual item — denormalized identically across every
+  // step in that group here; array of { department, description }.
+  crossDepartmental Json? @map("cross_departmental")
+
+  completions ChecklistStepCompletion[]
+
+  @@index([templateId])
+  @@map("checklist_steps")
+}
+
+// Standalone reference data from the playbook's "Cross-Departmental Interactions" section —
+// the ongoing (not per-step) relationship between CX and each other department. Not tied to
+// any template/run; purely reference content surfaced on the CX Playbook page.
+model DepartmentInteraction {
+  id              String @id @default(cuid())
+  department      String
+  keyContact      String @map("key_contact")
+  interactionType String @map("interaction_type")
+  frequency       String
+  keyActivities   String @map("key_activities")
+  order           Int
+
+  @@index([department])
+  @@map("department_interactions")
+}
+
+model ChecklistRun {
+  id         String            @id @default(cuid())
+  templateId String            @map("template_id")
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id])
+  customerId String?           @map("customer_id")
+  customer   Customer?         @relation(fields: [customerId], references: [id])
+
+  // Optional more-specific subject (e.g. which Sale, which Complaint) using the same
+  // polymorphic pattern as Task/Interaction/Document/Feedback elsewhere in this schema.
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+
+  // Free-text identifier for runs with no single client subject (e.g. Stage 09's recurring
+  // ops reports).
+  label String?
+
+  startedAt     DateTime  @default(now()) @map("started_at")
+  startedById   String?   @map("started_by")
+  startedBy     User?     @relation("ChecklistRunStartedBy", fields: [startedById], references: [id])
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  completions ChecklistStepCompletion[]
+
+  @@index([templateId])
+  @@index([customerId])
+  @@map("checklist_runs")
+}
+
+model ChecklistStepCompletion {
+  id            String       @id @default(cuid())
+  runId         String       @map("run_id")
+  run           ChecklistRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId        String       @map("step_id")
+  step          ChecklistStep @relation(fields: [stepId], references: [id])
+  completed     Boolean      @default(false)
+  completedAt   DateTime?    @map("completed_at")
+  completedById String?      @map("completed_by")
+  completedBy   User?        @relation("ChecklistStepCompletedBy", fields: [completedById], references: [id])
+  note          String?
+
+  @@unique([runId, stepId])
+  @@index([runId])
+  @@map("checklist_step_completions")
+}
+

@@ -1,0 +1,102 @@
+// Dynamic, admin-configurable replacement for the OpportunityStage and LeadStatus enums.
+// Two pipelines are seeded (SALES_OPPORTUNITY, LEAD_NURTURE) with stages matching today's
+// enum values 1:1. Lead/Opportunity stay concrete models — they just gain a real FK to the
+// stage they're currently in — so every relation here is real-FK and fully typed; there is no
+// generic/polymorphic Entity table, deliberately (a reviewed generic PipelineEntity design was
+// rejected earlier for exactly this reason).
+model Pipeline {
+  id        String   @id @default(cuid())
+  key       String   @unique // "SALES_OPPORTUNITY" | "LEAD_NURTURE"
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  stages PipelineStage[]
+
+  @@map("pipelines")
+}
+
+model PipelineStage {
+  id         String   @id @default(cuid())
+  pipelineId String   @map("pipeline_id")
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  // Stable literal identity, e.g. "CLOSED_WON" — seeded 1:1 from today's enum literals. Kept
+  // distinct from `id` (a cuid) specifically so Automations triggerWorkflows payloads and the
+  // handful of legitimately-curated business-rule lookups (e.g. the CONTRACT-stage gamification
+  // hook) keep working unchanged after the migration — they reference this key, never the id.
+  key   String
+  label String
+
+  stageOrder   Int    @map("stage_order")
+  badgeVariant String @default("default") @map("badge_variant") // matches badge.tsx's cva variants
+
+  probability Int @default(0) // Opportunity pipeline only; Lead stages leave this 0
+
+  isWonStage  Boolean @default(false) @map("is_won_stage")
+  isLostStage Boolean @default(false) @map("is_lost_stage")
+
+  // Replaces nurture.ts's STALE_THRESHOLD_DAYS map and the "NEW + 48h + no activity" rule
+  // independently triplicated across alerts.ts/sales-performance.ts/nurture.ts.
+  staleAfterDays Int? @map("stale_after_days")
+
+  // Replace lead-taxonomy.ts's AGEING_OPEN_STATUSES / NURTURE_ACTIVE_STATUSES arrays — two
+  // deliberately different "is this lead open/active" definitions, kept as separate flags so
+  // they can never be conflated the way dashboard.ts's inline duplicate of one of them was.
+  countsAsAgeingOpen    Boolean @default(false) @map("counts_as_ageing_open")
+  countsAsNurtureActive Boolean @default(false) @map("counts_as_nurture_active")
+
+  isActive Boolean @default(true) @map("is_active") // soft-disable; never hard-delete a stage
+  // that live records or history still reference
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leads         Lead[]
+  opportunities Opportunity[]
+
+  leadHistoryFrom LeadStageHistory[] @relation("LeadStageHistoryFromStage")
+  leadHistoryTo   LeadStageHistory[] @relation("LeadStageHistoryToStage")
+  oppHistoryFrom  OpportunityStageHistory[] @relation("OpportunityStageHistoryFromStage")
+  oppHistoryTo    OpportunityStageHistory[] @relation("OpportunityStageHistoryToStage")
+
+  @@unique([pipelineId, key])
+  @@index([pipelineId, stageOrder])
+  @@map("pipeline_stages")
+}
+
+// Per-entity stage-change history — mirrors the existing UnitPricingHistory/UnitStatusHistory
+// convention (real FK to the owning entity) rather than a generic polymorphic table.
+model LeadStageHistory {
+  id          String         @id @default(cuid())
+  leadId      String         @map("lead_id")
+  lead        Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStageId String?        @map("from_stage_id")
+  fromStage   PipelineStage? @relation("LeadStageHistoryFromStage", fields: [fromStageId], references: [id])
+  toStageId   String         @map("to_stage_id")
+  toStage     PipelineStage  @relation("LeadStageHistoryToStage", fields: [toStageId], references: [id])
+  changedAt   DateTime       @default(now()) @map("changed_at")
+  changedById String         @map("changed_by")
+  changedBy   User           @relation("LeadStageHistoryChangedBy", fields: [changedById], references: [id])
+  notes       String?
+
+  @@index([leadId])
+  @@map("lead_stage_history")
+}
+
+model OpportunityStageHistory {
+  id            String         @id @default(cuid())
+  opportunityId String         @map("opportunity_id")
+  opportunity   Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  fromStageId   String?        @map("from_stage_id")
+  fromStage     PipelineStage? @relation("OpportunityStageHistoryFromStage", fields: [fromStageId], references: [id])
+  toStageId     String         @map("to_stage_id")
+  toStage       PipelineStage  @relation("OpportunityStageHistoryToStage", fields: [toStageId], references: [id])
+  changedAt     DateTime       @default(now()) @map("changed_at")
+  changedById   String         @map("changed_by")
+  changedBy     User           @relation("OpportunityStageHistoryChangedBy", fields: [changedById], references: [id])
+  notes         String?
+
+  @@index([opportunityId])
+  @@map("opportunity_stage_history")
+}

@@ -1,0 +1,44 @@
+// DevCRM data model — Prisma multi-file schema (prismaSchemaFolder preview feature).
+// Conventions used across every file in this folder:
+//   - id: cuid() string primary key
+//   - createdAt / updatedAt on every table; deletedAt (soft delete) on primary business entities
+//   - money: Decimal(14,2) + a sibling `currency` column (default "USD"), never Float
+//   - status fields are enums, never free-text strings
+//   - cross-domain links (Document, Task, Interaction, Feedback) use a polymorphic
+//     (relatedEntityType, relatedEntityId) pair since Prisma has no native polymorphic relation
+//   - Payment is intentionally generic (method + reference only) — gateway integration
+//     (Paystack/Flutterwave/Mobile Money APIs, webhooks, reconciliation) belongs to the
+//     Finance module's service layer, not this schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["prismaSchemaFolder"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Polymorphic target for Document / Task / Interaction / Feedback
+enum RelatedEntityType {
+  LEAD
+  CUSTOMER
+  OPPORTUNITY
+  UNIT
+  SALE
+  CONTRACT
+  COMPLAINT
+  ASSET
+  WORK_ORDER
+  HANDOVER
+  SITE_VISIT
+  SNAGGING_INSPECTION
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}

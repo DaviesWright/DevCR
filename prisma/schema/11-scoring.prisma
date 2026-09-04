@@ -1,0 +1,95 @@
+// BANT-Plus lead scoring (Devtraco's 5-pillar framework: Budget, Authority, Need,
+// Timeline, Fit) and behavioral scoring, plus the model registry behind the scoring
+// engine. Lead.bantScore/qualificationStatus (in 02-crm.prisma) is the cached current
+// verdict; BantScore holds the full per-factor breakdown and history of how that
+// verdict was reached.
+
+model BantScore {
+  id               String              @id @default(cuid())
+  leadId           String              @map("lead_id")
+  lead             Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId           String?             @map("user_id")
+  user             User?               @relation(fields: [userId], references: [id])
+  budgetScore      Int                 @default(0) @map("budget_score")
+  authorityScore   Int                 @default(0) @map("authority_score")
+  needScore        Int                 @default(0) @map("need_score")
+  timelineScore    Int                 @default(0) @map("timeline_score")
+  fitScore         Int                 @default(0) @map("fit_score")
+  totalScore       Int                 @default(0) @map("total_score")
+  status           QualificationStatus @default(UNQUALIFIED)
+  agentAdjustments Json?               @map("agent_adjustments")
+  notes            String?
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([userId])
+  @@index([totalScore])
+  @@index([status])
+  @@map("bant_scores")
+}
+
+model BehavioralScore {
+  id               String    @id @default(cuid())
+  leadId           String    @map("lead_id")
+  lead             Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  emailOpens       Int       @default(0) @map("email_opens")
+  emailClicks      Int       @default(0) @map("email_clicks")
+  siteVisits       Int       @default(0) @map("site_visits")
+  documentViews    Int       @default(0) @map("document_views")
+  meetingsAttended Int       @default(0) @map("meetings_attended")
+  callsCompleted   Int       @default(0) @map("calls_completed")
+  totalScore       Int       @default(0) @map("total_score")
+  engagementLevel  String    @default("LOW") @map("engagement_level")
+  lastActivityAt   DateTime? @map("last_activity_at")
+  scoreDate        DateTime  @default(now()) @map("score_date")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([totalScore])
+  @@index([scoreDate])
+  @@map("behavioral_scores")
+}
+
+model ModelWeight {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  modelType     String    @default("LOGISTIC_REGRESSION") @map("model_type")
+  feature       String
+  weight        Float     @default(0)
+  intercept     Float?    @default(0)
+  version       String    @default("1.0.0")
+  isActive      Boolean   @default(true) @map("is_active")
+  lastTrainedAt DateTime? @map("last_trained_at")
+  sampleCount   Int       @default(0) @map("sample_count")
+  accuracy      Float?    @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  trainingHistory ModelTrainingHistory[]
+
+  @@index([name])
+  @@index([isActive])
+  @@index([modelType])
+  @@map("model_weights")
+}
+
+model ModelTrainingHistory {
+  id            String      @id @default(cuid())
+  modelWeightId String      @map("model_weight_id")
+  modelWeight   ModelWeight @relation(fields: [modelWeightId], references: [id])
+  trainedAt     DateTime    @default(now()) @map("trained_at")
+  sampleSize    Int         @map("sample_size")
+  accuracy      Float
+  precision     Float
+  recall        Float
+  f1Score       Float       @map("f1_score")
+  features      Json
+  notes         String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([modelWeightId])
+  @@index([trainedAt])
+  @@map("model_training_history")
+}

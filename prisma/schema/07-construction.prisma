@@ -1,0 +1,127 @@
+// Construction progress, snagging inspections, and contractors.
+
+enum ConstructionStageStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  DELAYED
+  COMPLETED
+}
+
+enum SnaggingStatus {
+  OPEN
+  ASSIGNED
+  FIXED
+  VERIFIED
+  REJECTED
+}
+
+model ConstructionStage {
+  id            String                  @id @default(cuid())
+  developmentId String                  @map("development_id")
+  development   Development             @relation(fields: [developmentId], references: [id])
+  name          String
+  sequence      Int
+  plannedStart  DateTime?               @map("planned_start")
+  plannedEnd    DateTime?               @map("planned_end")
+  actualStart   DateTime?               @map("actual_start")
+  actualEnd     DateTime?               @map("actual_end")
+  status        ConstructionStageStatus @default(NOT_STARTED)
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+
+  unitProgress          UnitConstructionProgress[]
+  contractorAssignments ContractorAssignment[]
+  paymentSchedules      PaymentSchedule[]
+
+  @@index([developmentId])
+  @@index([status])
+  @@map("construction_stages")
+}
+
+model UnitConstructionProgress {
+  id                  String            @id @default(cuid())
+  unitId              String            @map("unit_id")
+  unit                Unit              @relation(fields: [unitId], references: [id])
+  constructionStageId String            @map("construction_stage_id")
+  constructionStage   ConstructionStage @relation(fields: [constructionStageId], references: [id])
+  percentComplete     Int               @default(0) @map("percent_complete")
+  updatedById         String?           @map("updated_by")
+  updatedBy           User?             @relation("ConstructionProgressUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  @@unique([unitId, constructionStageId])
+  @@index([unitId])
+  @@map("unit_construction_progress")
+}
+
+model SnaggingInspection {
+  id            String    @id @default(cuid())
+  unitId        String    @map("unit_id")
+  unit          Unit      @relation(fields: [unitId], references: [id])
+  inspectedById String    @map("inspected_by")
+  inspectedBy   User      @relation("SnaggingInspectedBy", fields: [inspectedById], references: [id])
+  inspectedAt   DateTime  @default(now()) @map("inspected_at")
+  signedOffAt   DateTime? @map("signed_off_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  items SnaggingItem[]
+
+  @@index([unitId])
+  @@map("snagging_inspections")
+}
+
+model SnaggingItem {
+  id                   String             @id @default(cuid())
+  snaggingInspectionId String             @map("snagging_inspection_id")
+  snaggingInspection   SnaggingInspection @relation(fields: [snaggingInspectionId], references: [id], onDelete: Cascade)
+  category             String
+  description          String
+  photoUrl             String?            @map("photo_url")
+  status               SnaggingStatus     @default(OPEN)
+  assignedContractorId String?            @map("assigned_contractor_id")
+  assignedContractor   Contractor?        @relation(fields: [assignedContractorId], references: [id])
+  fixedAt              DateTime?          @map("fixed_at")
+  verifiedAt           DateTime?          @map("verified_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  @@index([snaggingInspectionId])
+  @@index([status])
+  @@map("snagging_items")
+}
+
+model Contractor {
+  id          String   @id @default(cuid())
+  companyName String   @map("company_name")
+  contactName String?  @map("contact_name")
+  phone       String?
+  email       String?
+  specialty   String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  snaggingItems         SnaggingItem[]
+  contractorAssignments ContractorAssignment[]
+  workOrders            WorkOrder[]
+
+  @@map("contractors")
+}
+
+model ContractorAssignment {
+  id                  String            @id @default(cuid())
+  contractorId        String            @map("contractor_id")
+  contractor          Contractor        @relation(fields: [contractorId], references: [id])
+  constructionStageId String            @map("construction_stage_id")
+  constructionStage   ConstructionStage @relation(fields: [constructionStageId], references: [id])
+  assignedById        String?           @map("assigned_by")
+  assignedBy          User?             @relation("ContractorAssignmentAssignedBy", fields: [assignedById], references: [id])
+  startDate           DateTime?         @map("start_date")
+  endDate             DateTime?         @map("end_date")
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  @@index([contractorId])
+  @@index([constructionStageId])
+  @@map("contractor_assignments")
+}

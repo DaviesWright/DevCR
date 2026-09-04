@@ -1,0 +1,161 @@
+// Customer master record and related profile data.
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum CustomerDocumentType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVERS_LICENSE
+  PROOF_OF_ADDRESS
+  KYC_FORM
+  OTHER
+}
+
+// Drives communication style, trust-building approach, and sales cadence
+// per the Sales Playbook's four buyer segment profiles.
+enum BuyerSegment {
+  LOCAL_RESIDENTIAL
+  DIASPORA
+  CORPORATE
+  INVESTOR
+}
+
+// Marketing's read of overall relationship sentiment — distinct from CX's per-complaint
+// tracking; a simple manual/derived signal for segmentation and campaign targeting.
+enum CustomerSentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model Customer {
+  id                 String        @id @default(cuid())
+  firstName          String        @map("first_name")
+  lastName           String        @map("last_name")
+  email              String?       @unique
+  phone              String        @unique
+  nationality        String?
+  segment            BuyerSegment?
+  dateOfBirth        DateTime?     @map("date_of_birth")
+  kycStatus          KycStatus     @default(PENDING) @map("kyc_status")
+  assignedSalesRepId String?   @map("assigned_sales_rep_id")
+  assignedSalesRep   User?     @relation("CustomerAssignedSalesRep", fields: [assignedSalesRepId], references: [id])
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  // Marketing fields (docs/marketing-spec.md §3.2.1) — consent/preferred-channel already exist
+  // on CustomerPreference (marketingOptIn / preferredContact); these are the ones that didn't:
+  engagementScore        Decimal           @default(0) @db.Decimal(5, 2) @map("engagement_score")
+  sentiment              CustomerSentiment @default(NEUTRAL)
+  lastMarketingContactAt DateTime?         @map("last_marketing_contact_at")
+  optOutEmail            Boolean           @default(false) @map("opt_out_email")
+  optOutSms              Boolean           @default(false) @map("opt_out_sms")
+  optOutWhatsapp         Boolean           @default(false) @map("opt_out_whatsapp")
+
+  addresses      CustomerAddress[]
+  documents      CustomerDocument[]
+  contacts       CustomerContact[]
+  preferences    CustomerPreference?
+  leads          Lead[]
+  referralsGiven Lead[] @relation("LeadReferredBy")
+  opportunities  Opportunity[]
+  siteVisits     SiteVisit[]
+  reservations   Reservation[]
+  sales          Sale[]
+  complaints      Complaint[]
+  handovers       Handover[]
+  warrantyClaims  WarrantyClaim[]
+  feedback        Feedback[]
+  npsResponses    NPSResponse[]
+  clientHandovers ClientHandover[]
+  checklistRuns   ChecklistRun[]
+  syncedEmails         SyncedEmail[]
+  syncedCalendarEvents SyncedCalendarEvent[]
+
+  // Finance
+  payments             Payment[]
+  bcMirrorTransactions BcMirrorTransaction[]
+  bcMirrorCustomer     BcMirrorCustomer?
+
+  // Marketing
+  marketingSegmentMembers MarketingSegmentMember[]
+  marketingMessages       MarketingMessage[]
+  engagementEvents        EngagementEvent[]
+  customerJourneys        CustomerJourney[]
+  aiContentLogs           AIContentLog[]
+
+  @@index([assignedSalesRepId])
+  @@index([kycStatus])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String   @id @default(cuid())
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String?
+  line1      String
+  line2      String?
+  city       String
+  region     String?
+  country    String   @default("Ghana")
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+model CustomerDocument {
+  id         String               @id @default(cuid())
+  customerId String               @map("customer_id")
+  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       CustomerDocumentType
+  fileUrl    String               @map("file_url")
+  verifiedAt DateTime?            @map("verified_at")
+  expiresAt  DateTime?            @map("expires_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_documents")
+}
+
+model CustomerContact {
+  id           String   @id @default(cuid())
+  customerId   String   @map("customer_id")
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  relationship String
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  phone        String?
+  email        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+model CustomerPreference {
+  id                String   @id @default(cuid())
+  customerId        String   @unique @map("customer_id")
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  preferredContact  String?  @map("preferred_contact")
+  marketingOptIn    Boolean  @default(true) @map("marketing_opt_in")
+  preferredLanguage String   @default("en") @map("preferred_language")
+
+  // Consent trail (Master Technical Specification §23 — "never assume consent simply because
+  // contact information exists"). Stamped whenever a staff member records/updates this
+  // customer's marketing preferences via the Customer 360 Marketing panel.
+  marketingConsentAt     DateTime? @map("marketing_consent_at")
+  marketingConsentSource String?   @map("marketing_consent_source")
+
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("customer_preferences")
+}

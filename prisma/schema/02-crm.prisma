@@ -1,0 +1,305 @@
+// Lead capture, qualification, and opportunity/pipeline tracking.
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  NURTURING
+  NO_RESPONSE
+  QUALIFIED
+  REAL_OPPORTUNITY
+  UNQUALIFIED
+  CONVERTED
+}
+
+// Cached qualification verdict on Lead, and the status BantScore snapshots carry.
+enum QualificationStatus {
+  UNQUALIFIED
+  REVIEW
+  QUALIFIED
+}
+
+// Structured reason captured on disqualify, for the "lost/disqualified reasons" report.
+enum LeadLostReason {
+  NO_BUDGET
+  WRONG_TIMING
+  NOT_INTERESTED
+  UNRESPONSIVE
+  CHOSE_COMPETITOR
+  WRONG_FIT
+  COULD_NOT_SECURE_FINANCE
+  DUPLICATE
+  OTHER
+}
+
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFIED
+  SITE_VISIT
+  RESERVATION
+  NEGOTIATION
+  CONTRACT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum SiteVisitStatus {
+  SCHEDULED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+  RESCHEDULED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InteractionType {
+  CALL
+  EMAIL
+  MEETING
+  SITE_VISIT
+  SMS
+  WHATSAPP
+  NOTE
+}
+
+enum CampaignStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+// Referral is the highest-converting source in both the real buyer-intelligence deck (72-83%)
+// and the pipeline diagnostic, but was previously untracked beyond the generic LeadSource tag.
+enum ReferralRewardStatus {
+  NONE
+  PENDING
+  REWARDED
+}
+
+model LeadSource {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@map("lead_sources")
+}
+
+model Campaign {
+  id        String         @id @default(cuid())
+  name      String
+  channel   String?
+  startDate DateTime?      @map("start_date")
+  endDate   DateTime?      @map("end_date")
+  budget    Decimal?       @db.Decimal(12, 2)
+  currency  String         @default("USD")
+  status    CampaignStatus @default(PLANNED)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@map("campaigns")
+}
+
+model Lead {
+  id                String        @id @default(cuid())
+  customerId        String        @map("customer_id")
+  customer          Customer      @relation(fields: [customerId], references: [id])
+  sourceId          String        @map("source_id")
+  source            LeadSource    @relation(fields: [sourceId], references: [id])
+  campaignId        String?       @map("campaign_id")
+  campaign          Campaign?     @relation(fields: [campaignId], references: [id])
+
+  // Attribution taxonomy (19-marketing-attribution.prisma): Channel -> Source -> Campaign ->
+  // Medium -> Touchpoint. Channel/Medium are optional, configurable master tables (an admin adds
+  // new values without a code change); Touchpoint is free text since real touchpoints are too
+  // specific/varied to usefully enumerate ("Landing Page Form", "WhatsApp Conversation").
+  channelId  String?                 @map("channel_id")
+  channel    MarketingChannelMaster? @relation(fields: [channelId], references: [id])
+  mediumId   String?                 @map("medium_id")
+  medium     MarketingMedium?        @relation(fields: [mediumId], references: [id])
+  touchpoint String?
+  assignedToId      String?       @map("assigned_to")
+  assignedTo        User?         @relation("LeadAssignedTo", fields: [assignedToId], references: [id])
+  budgetMin         Decimal?      @map("budget_min") @db.Decimal(14, 2)
+  budgetMax         Decimal?      @map("budget_max") @db.Decimal(14, 2)
+  currency          String        @default("USD")
+  preferredLocation String?       @map("preferred_location")
+  propertyTypeId    String?       @map("property_type_id")
+  propertyType      PropertyType? @relation(fields: [propertyTypeId], references: [id])
+  score             Int           @default(0)
+  status            LeadStatus    @default(NEW)
+  // Additive migration to a dynamic pipeline stage — nullable until backfilled; `status` above
+  // stays authoritative and untouched until the write-both period ends. See prisma/schema/20-pipelines.prisma.
+  pipelineStageId   String?        @map("pipeline_stage_id")
+  pipelineStage     PipelineStage? @relation(fields: [pipelineStageId], references: [id])
+  notes             String?
+
+  // BANT qualification — cached current verdict; full scoring history lives in BantScore.
+  bantScore           Int                 @default(0) @map("bant_score")
+  qualificationStatus QualificationStatus @default(UNQUALIFIED) @map("qualification_status")
+  qualifiedAt         DateTime?           @map("qualified_at")
+
+  // Real Opportunities stage (docs/real-opportunities-spec.md §1) — a Qualified lead that has
+  // also proven sustained, real engagement. suspectedPersona is a non-committal marketing tag
+  // captured during this phase to seed the future Marketing module (§3); distinct from the
+  // committed Customer.segment.
+  realOpportunityAt    DateTime? @map("real_opportunity_at")
+  suspectedPersona     String?   @map("suspected_persona")
+  suspectedPersonaNote String?   @map("suspected_persona_note")
+
+  // Set on disqualify — drives the "lost/disqualified reasons" report.
+  lostReason     LeadLostReason? @map("lost_reason")
+  lostReasonNote String?         @map("lost_reason_note")
+  disqualifiedAt DateTime?       @map("disqualified_at")
+
+  // Referral tracking (2026 source-docs gap analysis §3) — who referred this lead, and whether
+  // that referrer has been rewarded. Separate from LeadSource ("Referral"), which only tags
+  // the channel, not the specific referring customer.
+  referredByCustomerId String?              @map("referred_by_customer_id")
+  referredBy           Customer?            @relation("LeadReferredBy", fields: [referredByCustomerId], references: [id])
+  referralRewardStatus ReferralRewardStatus @default(NONE) @map("referral_reward_status")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  activities       LeadActivity[]
+  opportunities    Opportunity[]
+  siteVisits       SiteVisit[]
+  bantScores       BantScore[]
+  behavioralScores BehavioralScore[]
+  personaSignals   LeadPersonaSignal[]
+  stageHistory     LeadStageHistory[]
+
+  @@index([customerId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([qualificationStatus])
+  @@index([bantScore])
+  @@index([createdAt])
+  @@index([pipelineStageId])
+  @@map("leads")
+}
+
+model LeadActivity {
+  id          String          @id @default(cuid())
+  leadId      String          @map("lead_id")
+  lead        Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        InteractionType
+  description String?
+  occurredAt  DateTime        @default(now()) @map("occurred_at")
+  createdById String          @map("created_by")
+  createdBy   User            @relation("LeadActivityCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@index([leadId])
+  @@map("lead_activities")
+}
+
+model Opportunity {
+  id                String           @id @default(cuid())
+  leadId            String?          @map("lead_id")
+  lead              Lead?            @relation(fields: [leadId], references: [id])
+  customerId        String           @map("customer_id")
+  customer          Customer         @relation(fields: [customerId], references: [id])
+  unitId            String?          @map("unit_id")
+  unit              Unit?            @relation(fields: [unitId], references: [id])
+  expectedValue     Decimal          @map("expected_value") @db.Decimal(14, 2)
+  currency          String           @default("USD")
+  stage             OpportunityStage @default(PROSPECTING)
+  // Additive migration to a dynamic pipeline stage — nullable until backfilled; `stage` above
+  // stays authoritative and untouched until the write-both period ends. See prisma/schema/20-pipelines.prisma.
+  pipelineStageId   String?          @map("pipeline_stage_id")
+  pipelineStage     PipelineStage?   @relation(fields: [pipelineStageId], references: [id])
+  probability       Int              @default(0)
+  expectedCloseDate DateTime?        @map("expected_close_date")
+  closedAt          DateTime?        @map("closed_at")
+  ownerId           String           @map("owner_id")
+  owner             User             @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  deletedAt         DateTime?        @map("deleted_at")
+
+  siteVisits   SiteVisit[]
+  reservations Reservation[]
+  sale         Sale?
+  stageHistory OpportunityStageHistory[]
+
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([pipelineStageId])
+  @@index([stage])
+  @@map("opportunities")
+}
+
+model SiteVisit {
+  id            String          @id @default(cuid())
+  opportunityId String?         @map("opportunity_id")
+  opportunity   Opportunity?    @relation(fields: [opportunityId], references: [id])
+  leadId        String?         @map("lead_id")
+  lead          Lead?           @relation(fields: [leadId], references: [id])
+  customerId    String          @map("customer_id")
+  customer      Customer        @relation(fields: [customerId], references: [id])
+  unitId        String?         @map("unit_id")
+  unit          Unit?           @relation(fields: [unitId], references: [id])
+  scheduledAt   DateTime        @map("scheduled_at")
+  conductedById String?         @map("conducted_by")
+  conductedBy   User?           @relation("SiteVisitConductedBy", fields: [conductedById], references: [id])
+  status        SiteVisitStatus @default(SCHEDULED)
+  feedback      String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@map("site_visits")
+}
+
+model Task {
+  id                String             @id @default(cuid())
+  title             String
+  description       String?
+  dueDate           DateTime?          @map("due_date")
+  status            TaskStatus         @default(OPEN)
+  priority          Priority           @default(MEDIUM)
+  assignedToId      String             @map("assigned_to")
+  assignedTo        User               @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+  completedAt       DateTime?          @map("completed_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([assignedToId])
+  @@index([status])
+  @@map("tasks")
+}
+
+model Interaction {
+  id                String            @id @default(cuid())
+  type              InteractionType
+  subject           String?
+  notes             String?
+  occurredAt        DateTime          @default(now()) @map("occurred_at")
+  userId            String            @map("user_id")
+  user              User              @relation("InteractionUser", fields: [userId], references: [id])
+  relatedEntityType RelatedEntityType @map("related_entity_type")
+  relatedEntityId   String            @map("related_entity_id")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([userId])
+  @@map("interactions")
+}

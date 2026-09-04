@@ -1,0 +1,189 @@
+// Property development hierarchy: Development -> Block -> Floor -> Unit.
+
+enum UnitStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  UNDER_CONSTRUCTION
+  HANDED_OVER
+  BLOCKED
+}
+
+enum DevelopmentStatus {
+  PLANNING
+  CONSTRUCTION
+  SELLING
+  COMPLETED
+}
+
+model Development {
+  id                     String            @id @default(cuid())
+  name                   String
+  projectCode            String            @unique @map("project_code")
+  location               String
+  region                 String?
+  launchDate             DateTime?         @map("launch_date")
+  expectedCompletionDate DateTime?         @map("expected_completion_date")
+  status                 DevelopmentStatus @default(PLANNING)
+  totalUnits             Int               @default(0) @map("total_units")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+  deletedAt              DateTime?         @map("deleted_at")
+
+  phases             ProjectPhase[]
+  blocks             Block[]
+  units              Unit[]
+  constructionStages ConstructionStage[]
+  serviceCharges     ServiceCharge[]
+
+  @@index([status])
+  @@map("developments")
+}
+
+model ProjectPhase {
+  id            String      @id @default(cuid())
+  developmentId String      @map("development_id")
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
+  name          String
+  sequence      Int
+  startDate     DateTime?   @map("start_date")
+  endDate       DateTime?   @map("end_date")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([developmentId])
+  @@map("project_phases")
+}
+
+model PropertyType {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  bedrooms     Int
+  bathrooms    Int
+  builtAreaSqm Decimal  @map("built_area_sqm") @db.Decimal(8, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  units Unit[]
+  leads Lead[]
+
+  @@index([bedrooms])
+  @@map("property_types")
+}
+
+model Block {
+  id            String      @id @default(cuid())
+  developmentId String      @map("development_id")
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
+  name          String
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  floors Floor[]
+  units  Unit[]
+
+  @@unique([developmentId, name])
+  @@map("blocks")
+}
+
+model Floor {
+  id        String   @id @default(cuid())
+  blockId   String   @map("block_id")
+  block     Block    @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  level     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  units Unit[]
+
+  @@unique([blockId, level])
+  @@map("floors")
+}
+
+model Unit {
+  id             String       @id @default(cuid())
+  developmentId  String       @map("development_id")
+  development    Development  @relation(fields: [developmentId], references: [id])
+  blockId        String?      @map("block_id")
+  block          Block?       @relation(fields: [blockId], references: [id])
+  floorId        String?      @map("floor_id")
+  floor          Floor?       @relation(fields: [floorId], references: [id])
+  propertyTypeId String       @map("property_type_id")
+  propertyType   PropertyType @relation(fields: [propertyTypeId], references: [id])
+  unitNumber     String       @map("unit_number")
+  currentPrice   Decimal      @map("current_price") @db.Decimal(14, 2)
+  currency       String       @default("USD")
+  status         UnitStatus   @default(AVAILABLE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  deletedAt      DateTime?    @map("deleted_at")
+
+  featureMappings      UnitFeatureMapping[]
+  pricingHistory       UnitPricingHistory[]
+  statusHistory        UnitStatusHistory[]
+  opportunities        Opportunity[]
+  siteVisits           SiteVisit[]
+  reservations         Reservation[]
+  sales                Sale[]
+  constructionProgress UnitConstructionProgress[]
+  snaggingInspections  SnaggingInspection[]
+  complaints           Complaint[]
+  handovers            Handover[]
+  warrantyClaims       WarrantyClaim[]
+  assets               Asset[]
+  serviceCharges       ServiceCharge[]
+
+  @@unique([developmentId, unitNumber])
+  @@index([status])
+  @@index([propertyTypeId])
+  @@map("units")
+}
+
+model UnitFeature {
+  id   String @id @default(cuid())
+  name String @unique
+
+  featureMappings UnitFeatureMapping[]
+
+  @@map("unit_features")
+}
+
+model UnitFeatureMapping {
+  id        String      @id @default(cuid())
+  unitId    String      @map("unit_id")
+  unit      Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  featureId String      @map("feature_id")
+  feature   UnitFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, featureId])
+  @@map("unit_feature_mappings")
+}
+
+model UnitPricingHistory {
+  id          String   @id @default(cuid())
+  unitId      String   @map("unit_id")
+  unit        Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  price       Decimal  @db.Decimal(14, 2)
+  currency    String   @default("USD")
+  effectiveAt DateTime @default(now()) @map("effective_at")
+  changedById String   @map("changed_by")
+  changedBy   User     @relation("UnitPriceChangedBy", fields: [changedById], references: [id])
+  reason      String?
+
+  @@index([unitId])
+  @@map("unit_pricing_history")
+}
+
+model UnitStatusHistory {
+  id          String      @id @default(cuid())
+  unitId      String      @map("unit_id")
+  unit        Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  fromStatus  UnitStatus? @map("from_status")
+  toStatus    UnitStatus  @map("to_status")
+  changedAt   DateTime    @default(now()) @map("changed_at")
+  changedById String      @map("changed_by")
+  changedBy   User        @relation("UnitStatusChangedBy", fields: [changedById], references: [id])
+  notes       String?
+
+  @@index([unitId])
+  @@map("unit_status_history")
+}

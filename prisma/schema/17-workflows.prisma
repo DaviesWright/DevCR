@@ -1,0 +1,101 @@
+// General-purpose workflow automation — "when X happens on any entity, do Y" — distinct from
+// MarketingJourney (14-marketing.prisma), which only enrolls Segment members through a fixed
+// step sequence. Workflows fire on real CRM events (Lead created/status changed, Opportunity
+// stage changed, Complaint created) across any entity, not just Marketing's audience. Event-
+// driven, not scheduled: this app has no cron/scheduler (see EmailAccountConnection's header
+// comment in 12-integrations.prisma for the same constraint) — triggerWorkflows() is called
+// synchronously from inside the existing action that already performs that event, e.g.
+// moveOpportunityStage() calls it after changing the stage.
+enum WorkflowTriggerEvent {
+  LEAD_CREATED
+  LEAD_STATUS_CHANGED
+  OPPORTUNITY_CREATED
+  OPPORTUNITY_STAGE_CHANGED
+  COMPLAINT_CREATED
+  SALE_CREATED
+  // Document/legal-milestone triggers (Devtraco Document Template Library spec, Aug 2026 —
+  // §6.1 "Email Templates", §7.1 document generation workflow) — these fire from the exact
+  // SaleMilestoneChecklist steps already tracked for commission gating
+  // (src/lib/commission-milestones.ts), reused here rather than duplicating milestone state.
+  RESERVATION_CREATED
+  MILESTONE_DEPOSIT_CONFIRMED
+  MILESTONE_SPA_SIGNED_CLIENT
+  MILESTONE_SPA_SIGNED_DEVTRACO
+  MILESTONE_UNIT_ALLOCATED
+  HANDOVER_SCHEDULED
+  HANDOVER_COMPLETED
+  COMPLAINT_RESOLVED
+  PAYMENT_RECORDED
+  PAYMENT_OVERDUE
+  LEAD_ASSIGNED
+}
+
+enum WorkflowActionType {
+  CREATE_TASK
+  LOG_INTERACTION
+  CALL_WEBHOOK
+  SEND_EMAIL
+}
+
+enum WorkflowRunStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model Workflow {
+  id            String               @id @default(cuid())
+  name          String
+  description   String?
+  triggerEvent  WorkflowTriggerEvent @map("trigger_event")
+  // Narrows the trigger — e.g. { "toStatus": "QUALIFIED" } for LEAD_STATUS_CHANGED so the
+  // workflow only fires on that specific transition, not every status change.
+  triggerConfig Json?                @map("trigger_config")
+  // Simple field/operator/value list, ANDed — same shape convention as MarketingSegment's
+  // SegmentCriteria (src/lib/queries/marketing.ts), evaluated against the triggering entity.
+  conditions    Json?
+  isActive      Boolean              @default(true) @map("is_active")
+  createdById   String?              @map("created_by")
+  createdBy     User?                @relation("WorkflowCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  steps WorkflowStep[]
+  runs  WorkflowRun[]
+
+  @@index([triggerEvent])
+  @@index([isActive])
+  @@map("workflows")
+}
+
+model WorkflowStep {
+  id           String             @id @default(cuid())
+  workflowId   String             @map("workflow_id")
+  workflow     Workflow           @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepOrder    Int                @map("step_order")
+  actionType   WorkflowActionType @map("action_type")
+  // Shape depends on actionType: CREATE_TASK -> {title, description?, assignedToId?, priority?},
+  // LOG_INTERACTION -> {subject?, notes}, CALL_WEBHOOK -> {webhookId},
+  // SEND_EMAIL -> {templateId, recipient: "CUSTOMER" | "CONSULTANT"}.
+  actionConfig Json               @map("action_config")
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  @@unique([workflowId, stepOrder])
+  @@map("workflow_steps")
+}
+
+model WorkflowRun {
+  id          String            @id @default(cuid())
+  workflowId  String            @map("workflow_id")
+  workflow    Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  entityType  RelatedEntityType @map("entity_type")
+  entityId    String            @map("entity_id")
+  status      WorkflowRunStatus
+  // Per-step outcome: [{stepOrder, actionType, ok, error?}]
+  stepResults Json              @map("step_results")
+  triggeredAt DateTime          @default(now()) @map("triggered_at")
+
+  @@index([workflowId])
+  @@index([entityType, entityId])
+  @@map("workflow_runs")
+}

@@ -1,0 +1,217 @@
+// Reservations, sales, contracts, agents and commissions.
+
+enum ReservationStatus {
+  ACTIVE
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+enum SaleStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DEFAULTED
+}
+
+enum ContractStatus {
+  DRAFT
+  SENT
+  SIGNED
+  ACTIVE
+  AMENDED
+  TERMINATED
+  COMPLETED
+}
+
+// PENDING: milestone gate not yet met. AWAITING_APPROVAL: gate met, ready for Finance to
+// approve. APPROVED: Finance approved (accrual posted). PAID: paid to agent. HOLD: gate met but
+// a dependency (e.g. preceding tranche, instalment) isn't there yet. FROZEN: the sale's account
+// has an overdue payment schedule — commission Frozen (Commission Structure doc §2-3). VOID:
+// cancelled sale/tranche.
+enum CommissionStatus {
+  PENDING
+  AWAITING_APPROVAL
+  APPROVED
+  HOLD
+  FROZEN
+  PAID
+  VOID
+}
+
+enum CommissionTranche {
+  T1
+  T2
+  T3
+}
+
+model Reservation {
+  id             String            @id @default(cuid())
+  opportunityId  String?           @map("opportunity_id")
+  opportunity    Opportunity?      @relation(fields: [opportunityId], references: [id])
+  unitId         String            @map("unit_id")
+  unit           Unit              @relation(fields: [unitId], references: [id])
+  customerId     String            @map("customer_id")
+  customer       Customer          @relation(fields: [customerId], references: [id])
+  reservationFee Decimal           @map("reservation_fee") @db.Decimal(14, 2)
+  currency       String            @default("USD")
+  reservedAt     DateTime          @default(now()) @map("reserved_at")
+  expiryDate     DateTime          @map("expiry_date")
+  status         ReservationStatus @default(ACTIVE)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  extensions ReservationExtension[]
+  sale       Sale?
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("reservations")
+}
+
+model ReservationExtension {
+  id             String      @id @default(cuid())
+  reservationId  String      @map("reservation_id")
+  reservation    Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  previousExpiry DateTime    @map("previous_expiry")
+  newExpiry      DateTime    @map("new_expiry")
+  reason         String?
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  @@index([reservationId])
+  @@map("reservation_extensions")
+}
+
+model Sale {
+  id            String       @id @default(cuid())
+  reservationId String?      @unique @map("reservation_id")
+  reservation   Reservation? @relation(fields: [reservationId], references: [id])
+  opportunityId String?      @unique @map("opportunity_id")
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  unitId        String       @map("unit_id")
+  unit          Unit         @relation(fields: [unitId], references: [id])
+  customerId    String       @map("customer_id")
+  customer      Customer     @relation(fields: [customerId], references: [id])
+  salePrice     Decimal      @map("sale_price") @db.Decimal(14, 2)
+  currency      String       @default("USD")
+  saleDate      DateTime     @default(now()) @map("sale_date")
+  status        SaleStatus   @default(PENDING)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  deletedAt     DateTime?    @map("deleted_at")
+
+  contract             SalesContract?
+  commissions          Commission[]
+  milestoneChecklist   SaleMilestoneChecklist?
+  paymentPlan          PaymentPlan?
+  invoices             Invoice[]
+  clientHandover       ClientHandover?
+  bcMirrorTransactions BcMirrorTransaction[]
+
+  @@index([unitId])
+  @@index([customerId])
+  @@index([status])
+  @@map("sales")
+}
+
+model SalesContract {
+  id             String         @id @default(cuid())
+  saleId         String         @unique @map("sale_id")
+  sale           Sale           @relation(fields: [saleId], references: [id])
+  contractNumber String         @unique @map("contract_number")
+  status         ContractStatus @default(DRAFT)
+  documentUrl    String?        @map("document_url")
+  preparedById   String?        @map("prepared_by")
+  preparedBy     User?          @relation("ContractPreparedBy", fields: [preparedById], references: [id])
+  sentAt         DateTime?      @map("sent_at")
+  signedAt       DateTime?      @map("signed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  amendments ContractAmendment[]
+
+  @@index([status])
+  @@map("sales_contracts")
+}
+
+model ContractAmendment {
+  id           String        @id @default(cuid())
+  contractId   String        @map("contract_id")
+  contract     SalesContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  description  String
+  approvedById String?       @map("approved_by")
+  approvedBy   User?         @relation("ContractAmendmentApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?     @map("approved_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  @@index([contractId])
+  @@map("contract_amendments")
+}
+
+model SalesAgent {
+  id             String   @id @default(cuid())
+  userId         String   @unique @map("user_id")
+  user           User     @relation(fields: [userId], references: [id])
+  agentCode      String   @unique @map("agent_code")
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  commissions Commission[]
+
+  @@map("sales_agents")
+}
+
+model Commission {
+  id       String            @id @default(cuid())
+  saleId   String            @map("sale_id")
+  sale     Sale              @relation(fields: [saleId], references: [id])
+  agentId  String            @map("agent_id")
+  agent    SalesAgent        @relation(fields: [agentId], references: [id])
+  tranche  CommissionTranche @default(T1)
+  percentage Int             @default(80)
+  amount   Decimal           @db.Decimal(14, 2)
+  currency String            @default("USD")
+  status   CommissionStatus  @default(PENDING)
+
+  // T2/T3 only — Finance/Sales Ops confirms the client's instalment was received and cleared.
+  // T1's equivalent gate lives on SaleMilestoneChecklist.depositConfirmedAt.
+  instalmentConfirmedAt DateTime? @map("instalment_confirmed_at")
+  holdReason            String?   @map("hold_reason")
+
+  approvedAt DateTime? @map("approved_at")
+  paidAt     DateTime? @map("paid_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([saleId, tranche])
+  @@index([agentId])
+  @@index([status])
+  @@map("commissions")
+}
+
+// The T1 milestone gate (Commission Structure doc §2): every condition here must be true
+// before T1 can move to AWAITING_APPROVAL. One row per Sale, created alongside its 3
+// commission tranches at Closed Won.
+model SaleMilestoneChecklist {
+  id     String @id @default(cuid())
+  saleId String @unique @map("sale_id")
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  depositConfirmedAt    DateTime? @map("deposit_confirmed_at")
+  spaSignedByClientAt   DateTime? @map("spa_signed_by_client_at")
+  spaSignedByDevtracoAt DateTime? @map("spa_signed_by_devtraco_at")
+  unitAllocatedAt       DateTime? @map("unit_allocated_at")
+
+  managementApprovedAt   DateTime? @map("management_approved_at")
+  managementApprovedById String?   @map("management_approved_by")
+  managementApprovedBy   User?     @relation("SaleMilestoneApprovedBy", fields: [managementApprovedById], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sale_milestone_checklists")
+}

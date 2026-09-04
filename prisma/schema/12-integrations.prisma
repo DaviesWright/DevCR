@@ -1,0 +1,152 @@
+// Outbound event webhooks and API request audit logging.
+// Distinct from Payment (06-finance.prisma): these are the CRM's own outbound
+// notifications (e.g. "lead.created" -> external system), not inbound payment
+// gateway callbacks — that integration still belongs to the Finance module.
+
+model Webhook {
+  id              String    @id @default(cuid())
+  name            String
+  url             String
+  event           String
+  method          String    @default("POST")
+  headers         Json?
+  secret          String?
+  isActive        Boolean   @default(true) @map("is_active")
+  lastTriggeredAt DateTime? @map("last_triggered_at")
+  triggerCount    Int       @default(0) @map("trigger_count")
+  failureCount    Int       @default(0) @map("failure_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  webhookLogs WebhookLog[]
+
+  @@index([event])
+  @@index([isActive])
+  @@map("webhooks")
+}
+
+model WebhookLog {
+  id           String   @id @default(cuid())
+  webhookId    String   @map("webhook_id")
+  webhook      Webhook  @relation(fields: [webhookId], references: [id])
+  payload      Json
+  responseCode Int?     @map("response_code")
+  responseBody String?  @map("response_body")
+  error        String?
+  durationMs   Int?     @map("duration_ms")
+  status       String   @default("PENDING")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([webhookId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
+// Real (non-simulated) email/calendar sync — OAuth-connects a sales rep's own Gmail or
+// Outlook mailbox and pulls their real sent/received mail and calendar events into the
+// matching Customer's interaction timeline. Distinct from MarketingMessage (simulated
+// outbound sends) and Interaction (manually logged contact) — these rows are read-only
+// mirrors of what actually happened in the rep's real inbox/calendar. No push
+// webhooks/Pub-Sub subscriptions here (this app has no public URL and no
+// scheduler/cron — see docs/finance-roadmap.md for the same constraint elsewhere) —
+// sync is pull-based, triggered by "Sync now" or a page load, using each provider's
+// delta/incremental-sync token to avoid re-fetching the whole mailbox every time.
+enum EmailSyncProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum EmailSyncStatus {
+  CONNECTED
+  ERROR
+  DISCONNECTED
+}
+
+model EmailAccountConnection {
+  id             String            @id @default(cuid())
+  userId         String            @map("user_id")
+  user           User              @relation("EmailAccountConnectionUser", fields: [userId], references: [id], onDelete: Cascade)
+  provider       EmailSyncProvider
+  email          String
+  // AES-256-GCM encrypted (src/lib/crypto.ts) — never stored or logged in plaintext.
+  accessToken    String            @map("access_token")
+  refreshToken   String            @map("refresh_token")
+  tokenExpiresAt DateTime          @map("token_expires_at")
+  scope          String
+  // Provider-issued incremental-sync cursor (Gmail historyId / Graph delta link) so a
+  // re-sync only fetches what changed since last time, not the whole mailbox.
+  deltaCursor    String?           @map("delta_cursor")
+  status         EmailSyncStatus   @default(CONNECTED)
+  lastSyncedAt   DateTime?         @map("last_synced_at")
+  lastSyncError  String?           @map("last_sync_error")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  syncedEmails         SyncedEmail[]
+  syncedCalendarEvents SyncedCalendarEvent[]
+
+  @@unique([userId, provider])
+  @@map("email_account_connections")
+}
+
+model SyncedEmail {
+  id                String                 @id @default(cuid())
+  connectionId      String                 @map("connection_id")
+  connection        EmailAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  providerMessageId String                 @map("provider_message_id")
+  subject           String?
+  snippet           String?
+  fromEmail         String                 @map("from_email")
+  toEmails          String[]               @map("to_emails")
+  direction         String
+  occurredAt        DateTime               @map("occurred_at")
+  matchedCustomerId String?                @map("matched_customer_id")
+  matchedCustomer   Customer?              @relation(fields: [matchedCustomerId], references: [id])
+  createdAt         DateTime               @default(now()) @map("created_at")
+
+  @@unique([connectionId, providerMessageId])
+  @@index([matchedCustomerId])
+  @@map("synced_emails")
+}
+
+model SyncedCalendarEvent {
+  id                String                 @id @default(cuid())
+  connectionId      String                 @map("connection_id")
+  connection        EmailAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  providerEventId   String                 @map("provider_event_id")
+  title             String?
+  description       String?
+  startAt           DateTime               @map("start_at")
+  endAt             DateTime?              @map("end_at")
+  attendeeEmails    String[]               @map("attendee_emails")
+  matchedCustomerId String?                @map("matched_customer_id")
+  matchedCustomer   Customer?              @relation(fields: [matchedCustomerId], references: [id])
+  createdAt         DateTime               @default(now()) @map("created_at")
+
+  @@unique([connectionId, providerEventId])
+  @@index([matchedCustomerId])
+  @@map("synced_calendar_events")
+}
+
+model ApiLog {
+  id             String   @id @default(cuid())
+  userId         String?  @map("user_id")
+  user           User?    @relation(fields: [userId], references: [id])
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  method         String
+  path           String
+  queryParams    Json?    @map("query_params")
+  requestBody    Json?    @map("request_body")
+  responseStatus Int?     @map("response_status")
+  durationMs     Int?     @map("duration_ms")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([path])
+  @@index([method])
+  @@index([createdAt])
+  @@index([responseStatus])
+  @@map("api_logs")
+}

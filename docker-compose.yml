@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: devcrm
+      POSTGRES_USER: devcrm
+      POSTGRES_PASSWORD: devcrm_local_dev
+    ports:
+      # Host 5433, not 5432 — this machine already has a native PostgreSQL
+      # Windows service bound to 5432; this avoids fighting it for the port.
+      - "5433:5432"
+    volumes:
+      - devcrm_pgdata:/var/lib/postgresql/data
+
+volumes:
+  devcrm_pgdata:

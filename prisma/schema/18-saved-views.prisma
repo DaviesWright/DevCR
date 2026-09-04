@@ -1,0 +1,22 @@
+// Saved custom views (Twenty-CRM-style) — a named, reusable filter/sort/layout combination per
+// list page, scoped to the user who created it. `state` is a free-shape JSON blob because each
+// list page (Leads, Customers) owns a different filter vocabulary; this model only persists
+// whatever shape that page's client component already manages as local state, so adding a saved
+// view never requires touching this schema again for a new filter field.
+model SavedView {
+  id          String            @id @default(cuid())
+  name        String
+  // Reuses RelatedEntityType (00-base.prisma) — constrained at the application layer to
+  // LEAD/CUSTOMER/OPPORTUNITY, the three list pages that actually have saveable filter state.
+  entityType  RelatedEntityType @map("entity_type")
+  state       Json
+  isDefault   Boolean           @default(false) @map("is_default")
+  createdById String            @map("created_by")
+  createdBy   User              @relation("SavedViewCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@unique([entityType, createdById, name])
+  @@index([entityType, createdById])
+  @@map("saved_views")
+}

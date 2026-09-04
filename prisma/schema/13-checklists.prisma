@@ -1,0 +1,117 @@
+// Generic operational checklist engine, seeded from Devtraco's "CX Workflow: State 2
+// Operational Playbook" (11 tabs, each with grouped Process Execution steps and Quality &
+// Control checks). One ChecklistTemplate per playbook tab; ChecklistRun is one instance of a
+// template worked against a specific client (and optionally a more specific record — a Sale,
+// Complaint, Handover, SiteVisit, or SnaggingInspection — via the existing polymorphic
+// relatedEntityType/relatedEntityId pair). Unticked QUALITY_CHECK steps are the playbook's
+// ⚠️ notification triggers — computed as open flags at read time rather than a separate table.
+
+enum ChecklistStepKind {
+  PROCESS
+  QUALITY_CHECK
+}
+
+model ChecklistTemplate {
+  id               String   @id @default(cuid())
+  stageNumber      Int      @unique @map("stage_number")
+  title            String
+  goal             String
+  trigger          String
+  owner            String
+  sla              String
+  isOpenDesignItem Boolean  @default(false) @map("is_open_design_item")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  steps ChecklistStep[]
+  runs  ChecklistRun[]
+
+  @@map("checklist_templates")
+}
+
+model ChecklistStep {
+  id         String            @id @default(cuid())
+  templateId String            @map("template_id")
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  groupLabel String            @map("group_label")
+  order      Int
+  kind       ChecklistStepKind
+  label      String
+
+  // Only set for QUALITY_CHECK steps — mirrors the playbook's ⚠️ notification trigger.
+  notificationRecipient String? @map("notification_recipient")
+  notificationAction    String? @map("notification_action")
+
+  // The playbook's "Cross-Departmental Interaction" block is stated once per numbered step
+  // group (e.g. "Step 1.1"), not per individual item — denormalized identically across every
+  // step in that group here; array of { department, description }.
+  crossDepartmental Json? @map("cross_departmental")
+
+  completions ChecklistStepCompletion[]
+
+  @@index([templateId])
+  @@map("checklist_steps")
+}
+
+// Standalone reference data from the playbook's "Cross-Departmental Interactions" section —
+// the ongoing (not per-step) relationship between CX and each other department. Not tied to
+// any template/run; purely reference content surfaced on the CX Playbook page.
+model DepartmentInteraction {
+  id              String @id @default(cuid())
+  department      String
+  keyContact      String @map("key_contact")
+  interactionType String @map("interaction_type")
+  frequency       String
+  keyActivities   String @map("key_activities")
+  order           Int
+
+  @@index([department])
+  @@map("department_interactions")
+}
+
+model ChecklistRun {
+  id         String            @id @default(cuid())
+  templateId String            @map("template_id")
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id])
+  customerId String?           @map("customer_id")
+  customer   Customer?         @relation(fields: [customerId], references: [id])
+
+  // Optional more-specific subject (e.g. which Sale, which Complaint) using the same
+  // polymorphic pattern as Task/Interaction/Document/Feedback elsewhere in this schema.
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+
+  // Free-text identifier for runs with no single client subject (e.g. Stage 09's recurring
+  // ops reports).
+  label String?
+
+  startedAt     DateTime  @default(now()) @map("started_at")
+  startedById   String?   @map("started_by")
+  startedBy     User?     @relation("ChecklistRunStartedBy", fields: [startedById], references: [id])
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  completions ChecklistStepCompletion[]
+
+  @@index([templateId])
+  @@index([customerId])
+  @@map("checklist_runs")
+}
+
+model ChecklistStepCompletion {
+  id            String       @id @default(cuid())
+  runId         String       @map("run_id")
+  run           ChecklistRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId        String       @map("step_id")
+  step          ChecklistStep @relation(fields: [stepId], references: [id])
+  completed     Boolean      @default(false)
+  completedAt   DateTime?    @map("completed_at")
+  completedById String?      @map("completed_by")
+  completedBy   User?        @relation("ChecklistStepCompletedBy", fields: [completedById], references: [id])
+  note          String?
+
+  @@unique([runId, stepId])
+  @@index([runId])
+  @@map("checklist_step_completions")
+}

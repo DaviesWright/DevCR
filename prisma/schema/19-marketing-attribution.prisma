@@ -1,0 +1,52 @@
+// Lead attribution taxonomy (2026-09-04 request): "make Marketing Channel a configurable master
+// table rather than hard-coding these values." Deliberately separate from the MarketingChannel
+// enum in 14-marketing.prisma (EMAIL/SMS/WHATSAPP) — that enum is the app's actual SEND
+// capability (what sendDirectMessage can technically deliver through), while this is an
+// ATTRIBUTION taxonomy (where a lead came from: Billboard, Trade Shows, Google Ads, etc. — most
+// of which nothing ever "sends a message through"). The two concepts share some vocabulary
+// (both have "WhatsApp", "Email") but answer different questions and must not be merged.
+//
+// Full attribution hierarchy per the request: Channel -> Source -> Campaign -> Medium ->
+// Touchpoint. Source (LeadSource, 02-crm.prisma) and Campaign already exist as their own tables
+// and are untouched here. Channel and Medium are new configurable master tables; Touchpoint is
+// free text on Lead since real touchpoints ("Landing Page Form", "WhatsApp Conversation") are
+// too specific/varied to usefully enumerate in a master table.
+model MarketingChannelGroup {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  channels MarketingChannelMaster[]
+
+  @@map("marketing_channel_groups")
+}
+
+model MarketingChannelMaster {
+  id        String                @id @default(cuid())
+  groupId   String                @map("group_id")
+  group     MarketingChannelGroup @relation(fields: [groupId], references: [id])
+  name      String
+  isActive  Boolean               @default(true) @map("is_active")
+  sortOrder Int                   @default(0) @map("sort_order")
+  createdAt DateTime              @default(now()) @map("created_at")
+  updatedAt DateTime              @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@unique([groupId, name])
+  @@index([isActive])
+  @@map("marketing_channels")
+}
+
+model MarketingMedium {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leads Lead[]
+
+  @@map("marketing_mediums")
+}

@@ -1,0 +1,288 @@
+// Payment plans, payments, invoices, refunds and penalties.
+// Payment is intentionally generic: method + reference only. Gateway integration
+// (Paystack/Flutterwave/Mobile Money APIs, webhook verification, idempotency,
+// reconciliation) is owned by the Finance module's service layer, not this schema.
+
+enum PaymentPlanStatus {
+  ACTIVE
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+enum PaymentScheduleStatus {
+  PENDING
+  PAID
+  PARTIAL
+  OVERDUE
+  WAIVED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum PenaltyStatus {
+  PENDING
+  WAIVED
+  PAID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  PARTIAL
+  OVERDUE
+  VOID
+}
+
+// Devtraco Property Sale Payment & Financial Process Flow (v1.0, July 2026): the standard
+// 7-stage milestone schedule generated on Closed Won. CONSTRUCTION rows are tagged with the
+// real ConstructionStage they're tied to when the development has stages defined, instead of a
+// generic "Construction Milestone N" placeholder.
+enum PaymentMilestoneType {
+  RESERVATION
+  SPA_EXECUTION
+  CONSTRUCTION
+  HANDOVER
+}
+
+// Shared sync-state enum for every BC mirror table below.
+enum BcSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+model PaymentPlan {
+  id          String            @id @default(cuid())
+  saleId      String            @unique @map("sale_id")
+  sale        Sale              @relation(fields: [saleId], references: [id])
+  totalAmount Decimal           @map("total_amount") @db.Decimal(14, 2)
+  currency    String            @default("USD")
+  downPayment Decimal           @map("down_payment") @db.Decimal(14, 2)
+  status      PaymentPlanStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  schedules PaymentSchedule[]
+
+  @@index([status])
+  @@map("payment_plans")
+}
+
+model PaymentSchedule {
+  id            String                @id @default(cuid())
+  paymentPlanId String                @map("payment_plan_id")
+  paymentPlan   PaymentPlan           @relation(fields: [paymentPlanId], references: [id], onDelete: Cascade)
+  installmentNo Int                   @map("installment_no")
+  dueDate       DateTime              @map("due_date")
+  amountDue     Decimal               @map("amount_due") @db.Decimal(14, 2)
+  currency      String                @default("USD")
+  status        PaymentScheduleStatus @default(PENDING)
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  // Devtraco milestone framework — nullable so a manually-added/custom instalment can still
+  // exist without one. milestoneLabel carries the human label ("Construction Milestone 2 —
+  // Mid-construction", or the real ConstructionStage name when linked).
+  milestoneType       PaymentMilestoneType? @map("milestone_type")
+  milestoneLabel      String?               @map("milestone_label")
+  constructionStageId String?               @map("construction_stage_id")
+  constructionStage   ConstructionStage?    @relation(fields: [constructionStageId], references: [id])
+
+  allocations PaymentAllocation[]
+  penalties   Penalty[]
+
+  @@index([constructionStageId])
+
+  @@unique([paymentPlanId, installmentNo])
+  @@index([status])
+  @@index([dueDate])
+  @@map("payment_schedules")
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  customerId   String        @map("customer_id")
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  amount       Decimal       @db.Decimal(14, 2)
+  currency     String        @default("USD")
+  method       PaymentMethod
+  reference    String?
+  paidAt       DateTime      @default(now()) @map("paid_at")
+  recordedById String?       @map("recorded_by")
+  recordedBy   User?         @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  notes        String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  allocations PaymentAllocation[]
+  receipt     Receipt?
+  refunds     Refund[]
+  bcMirrorTransaction BcMirrorTransaction?
+
+  @@index([customerId])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id                String          @id @default(cuid())
+  paymentId         String          @map("payment_id")
+  payment           Payment         @relation(fields: [paymentId], references: [id])
+  paymentScheduleId String          @map("payment_schedule_id")
+  paymentSchedule   PaymentSchedule @relation(fields: [paymentScheduleId], references: [id])
+  amount            Decimal         @db.Decimal(14, 2)
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([paymentId])
+  @@index([paymentScheduleId])
+  @@map("payment_allocations")
+}
+
+model Receipt {
+  id          String   @id @default(cuid())
+  paymentId   String   @unique @map("payment_id")
+  payment     Payment  @relation(fields: [paymentId], references: [id])
+  receiptNo   String   @unique @map("receipt_no")
+  issuedAt    DateTime @default(now()) @map("issued_at")
+  documentUrl String?  @map("document_url")
+
+  bcMirrorReceipt BcMirrorReceipt?
+
+  @@map("receipts")
+}
+
+model Refund {
+  id           String       @id @default(cuid())
+  paymentId    String       @map("payment_id")
+  payment      Payment      @relation(fields: [paymentId], references: [id])
+  amount       Decimal      @db.Decimal(14, 2)
+  currency     String       @default("USD")
+  reason       String
+  status       RefundStatus @default(REQUESTED)
+  approvedById String?      @map("approved_by")
+  approvedBy   User?        @relation("RefundApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?    @map("approved_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("refunds")
+}
+
+model Penalty {
+  id                String          @id @default(cuid())
+  paymentScheduleId String          @map("payment_schedule_id")
+  paymentSchedule   PaymentSchedule @relation(fields: [paymentScheduleId], references: [id])
+  amount            Decimal         @db.Decimal(14, 2)
+  currency          String          @default("USD")
+  reason            String
+  status            PenaltyStatus   @default(PENDING)
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  @@index([paymentScheduleId])
+  @@map("penalties")
+}
+
+model Invoice {
+  id         String        @id @default(cuid())
+  saleId     String?       @map("sale_id")
+  sale       Sale?         @relation(fields: [saleId], references: [id])
+  invoiceNo  String        @unique @map("invoice_no")
+  amount     Decimal       @db.Decimal(14, 2)
+  currency   String        @default("USD")
+  taxAmount  Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  status     InvoiceStatus @default(DRAFT)
+  issuedById String?       @map("issued_by")
+  issuedBy   User?         @relation("InvoiceIssuedBy", fields: [issuedById], references: [id])
+  issuedAt   DateTime?     @map("issued_at")
+  dueDate    DateTime?     @map("due_date")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([saleId])
+  @@map("invoices")
+}
+
+// ==================== BUSINESS CENTRAL RECONCILIATION MIRROR TABLES ====================
+// Real relations to the CRM records they mirror (unlike the spec's loose string source-ids) —
+// matches this schema's existing convention. One BcMirrorTransaction row is created for every
+// Payment the moment it's recorded (audit trail regardless of whether BC is configured); the
+// actual POST to Business Central only fires when BC_TENANT_ID/BC_CLIENT_ID/etc are set
+// (src/lib/integrations/config.ts:isBCConfigured) — same "real but inert until configured"
+// pattern as the Google/Microsoft email sync integration.
+
+model BcMirrorTransaction {
+  id     String  @id @default(cuid())
+  paymentId  String   @unique @map("payment_id")
+  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
+  saleId     String?  @map("sale_id")
+  sale       Sale?    @relation(fields: [saleId], references: [id])
+
+  transactionType String       @map("transaction_type") // customerPayments (BC API entity name)
+  amount          Decimal      @db.Decimal(14, 2)
+  currency        String       @default("USD")
+  transactionDate DateTime     @map("transaction_date")
+
+  bcJournalId String?      @map("bc_journal_id")
+  bcPostedAt  DateTime?    @map("bc_posted_at")
+  status      BcSyncStatus @default(PENDING)
+  syncError   String?      @map("sync_error")
+  retryCount  Int          @default(0) @map("retry_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([customerId])
+  @@index([saleId])
+  @@map("bc_mirror_transactions")
+}
+
+model BcMirrorCustomer {
+  id           String       @id @default(cuid())
+  customerId   String       @unique @map("customer_id")
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  bcCustomerNo String?      @map("bc_customer_no")
+  status       BcSyncStatus @default(PENDING)
+  lastSyncedAt DateTime?    @map("last_synced_at")
+  syncError    String?      @map("sync_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("bc_mirror_customers")
+}
+
+model BcMirrorReceipt {
+  id          String       @id @default(cuid())
+  receiptId   String       @unique @map("receipt_id")
+  receipt     Receipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  bcReceiptId String?      @map("bc_receipt_id")
+  status      BcSyncStatus @default(PENDING)
+  syncedAt    DateTime?    @map("synced_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([status])
+  @@map("bc_mirror_receipts")
+}

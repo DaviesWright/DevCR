@@ -1,0 +1,240 @@
+@import url("https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-heading: "Lexend", sans-serif;
+    --font-body: "Source Sans 3", sans-serif;
+    --radius: 0.5rem;
+  }
+
+  /* ============================================================
+     Devtraco Plus — black & gold
+     Primary/highlight gold (#C9A24B / #D9B96A) and near-black surfaces
+     (#0A0A0A / #151515 / #1A1A1A) match the brand's actual tablet
+     lead-capture form 1:1, not an independently invented palette.
+     ============================================================ */
+  [data-theme="devtraco-plus"] {
+    --background: #faf9f7;
+    --foreground: #17140f;
+    --card: #ffffff;
+    --card-foreground: #17140f;
+    --popover: #ffffff;
+    --popover-foreground: #17140f;
+    --primary: #151515;
+    --primary-foreground: #faf9f7;
+    --secondary: #f0ede6;
+    --secondary-foreground: #17140f;
+    --muted: #f0ede6;
+    --muted-foreground: #6b675e;
+    --accent: #f3ead3;
+    --accent-foreground: #17140f;
+    --highlight: #c9a24b;
+    --highlight-foreground: #17140f;
+    --destructive: #b91c1c;
+    --destructive-foreground: #ffffff;
+    --success: #15803d;
+    --success-foreground: #ffffff;
+    --warning: #b45309;
+    --warning-foreground: #ffffff;
+    --info: #1d4ed8;
+    --info-foreground: #ffffff;
+    --border: #e4e0d6;
+    --input: #e4e0d6;
+    --ring: #c9a24b;
+  }
+
+  [data-theme="devtraco-plus"].dark {
+    --background: #0a0a0a;
+    --foreground: #fafafa;
+    --card: #151515;
+    --card-foreground: #fafafa;
+    --popover: #151515;
+    --popover-foreground: #fafafa;
+    --primary: #c9a24b;
+    --primary-foreground: #0a0a0a;
+    --secondary: #1a1a1a;
+    --secondary-foreground: #fafafa;
+    --muted: #1a1a1a;
+    --muted-foreground: #b0b0b0;
+    --accent: #1a1a1a;
+    --accent-foreground: #fafafa;
+    --highlight: #d9b96a;
+    --highlight-foreground: #0a0a0a;
+    --destructive: #dc2626;
+    --destructive-foreground: #ffffff;
+    --success: #22c55e;
+    --success-foreground: #0a0a0a;
+    --warning: #f59e0b;
+    --warning-foreground: #0a0a0a;
+    --info: #3b82f6;
+    --info-foreground: #0a0a0a;
+    --border: #211c12;
+    --input: #211c12;
+    --ring: #c9a24b;
+  }
+
+  /* ============================================================
+     Woodlands — green & gold
+     Brand tokens as given: primary-green #384336, accent-gold #C9A84C,
+     text-blue #6884A8 (used as the muted/secondary text color),
+     background #F7F4EE, white #FFFFFF.
+     ============================================================ */
+  [data-theme="woodlands"] {
+    --background: #f7f4ee;
+    --foreground: #2a3227;
+    --card: #ffffff;
+    --card-foreground: #2a3227;
+    --popover: #ffffff;
+    --popover-foreground: #2a3227;
+    --primary: #384336;
+    --primary-foreground: #ffffff;
+    --secondary: #ede9df;
+    --secondary-foreground: #2a3227;
+    --muted: #ede9df;
+    --muted-foreground: #6884a8;
+    --accent: #e7e2d3;
+    --accent-foreground: #2a3227;
+    --highlight: #c9a84c;
+    --highlight-foreground: #2a2010;
+    --destructive: #b91c1c;
+    --destructive-foreground: #ffffff;
+    --success: #15803d;
+    --success-foreground: #ffffff;
+    --warning: #b45309;
+    --warning-foreground: #ffffff;
+    --info: #1d4ed8;
+    --info-foreground: #ffffff;
+    --border: #e2ddce;
+    --input: #e2ddce;
+    --ring: #384336;
+  }
+
+  [data-theme="woodlands"].dark {
+    --background: #12160f;
+    --foreground: #f2efe6;
+    --card: #1a2016;
+    --card-foreground: #f2efe6;
+    --popover: #1a2016;
+    --popover-foreground: #f2efe6;
+    --primary: #c9a84c;
+    --primary-foreground: #1a2016;
+    --secondary: #212a1c;
+    --secondary-foreground: #f2efe6;
+    --muted: #212a1c;
+    --muted-foreground: #93a8bc;
+    --accent: #212a1c;
+    --accent-foreground: #f2efe6;
+    --highlight: #c9a84c;
+    --highlight-foreground: #1a2016;
+    --destructive: #dc2626;
+    --destructive-foreground: #ffffff;
+    --success: #22c55e;
+    --success-foreground: #1a2016;
+    --warning: #f59e0b;
+    --warning-foreground: #1a2016;
+    --info: #3b82f6;
+    --info-foreground: #1a2016;
+    --border: #2b3524;
+    --input: #2b3524;
+    --ring: #c9a84c;
+  }
+
+  /* ============================================================
+     Generic — rich dark mauve & light tan
+     Brand palette as given (deep mauve-brown / muted taupe / dusty rose /
+     pale blush / dark espresso-mauve / tan-camel), mapped by lightness:
+     darkest -> primary, palest -> background, tan -> highlight.
+     ============================================================ */
+  [data-theme="generic"] {
+    --background: #f6d7ca;
+    --foreground: #2a1e1a;
+    --card: #fffcfa;
+    --card-foreground: #2a1e1a;
+    --popover: #fffcfa;
+    --popover-foreground: #2a1e1a;
+    --primary: #6b564d;
+    --primary-foreground: #ffffff;
+    --secondary: #efdcd2;
+    --secondary-foreground: #2a1e1a;
+    --muted: #efdcd2;
+    --muted-foreground: #8c6a6e;
+    --accent: #e8cfc0;
+    --accent-foreground: #2a1e1a;
+    --highlight: #c99567;
+    --highlight-foreground: #2a1e1a;
+    --destructive: #b91c1c;
+    --destructive-foreground: #ffffff;
+    --success: #15803d;
+    --success-foreground: #ffffff;
+    --warning: #b45309;
+    --warning-foreground: #ffffff;
+    --info: #1d4ed8;
+    --info-foreground: #ffffff;
+    --border: #e3c9bc;
+    --input: #e3c9bc;
+    --ring: #6b564d;
+  }
+
+  [data-theme="generic"].dark {
+    --background: #1c1210;
+    --foreground: #f6e4da;
+    --card: #271a17;
+    --card-foreground: #f6e4da;
+    --popover: #271a17;
+    --popover-foreground: #f6e4da;
+    --primary: #c99567;
+    --primary-foreground: #1c1210;
+    --secondary: #2e211d;
+    --secondary-foreground: #f6e4da;
+    --muted: #2e211d;
+    --muted-foreground: #9c8488;
+    --accent: #2e211d;
+    --accent-foreground: #f6e4da;
+    --highlight: #d9a08f;
+    --highlight-foreground: #1c1210;
+    --destructive: #dc2626;
+    --destructive-foreground: #ffffff;
+    --success: #22c55e;
+    --success-foreground: #1c1210;
+    --warning: #f59e0b;
+    --warning-foreground: #1c1210;
+    --info: #3b82f6;
+    --info-foreground: #1c1210;
+    --border: #3a1f2e;
+    --input: #3a1f2e;
+    --ring: #d9a45e;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

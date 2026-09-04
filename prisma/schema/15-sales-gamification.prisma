@@ -1,0 +1,62 @@
+// Sales Enhancement doc (sales Enhancement.md) §2 — gamification, scoped to what's real and
+// computable from actual CRM events (points/tiers/badges/targets), not decorative mock data.
+// Deal aging, time-to-close, data-quality and lead-quality scores are computed on read from
+// existing tables (Opportunity/Lead/Customer) — no schema needed for those, same convention
+// as the existing stale-lead alert.
+
+model SalesPoint {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id])
+  points     Int
+  reason     String
+  category   String // LEAD, QUALIFY, REAL_OPPORTUNITY, SITE_VISIT, RESERVATION, CONTRACT, CLOSED_WON, HANDOVER_QUALITY
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("sales_points")
+}
+
+model SalesBadge {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  category    String // SPEED, VOLUME, QUALITY, REFERRALS, GROWTH
+  description String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  achievements SalesAchievement[]
+
+  @@map("sales_badges")
+}
+
+model SalesAchievement {
+  id       String     @id @default(cuid())
+  userId   String     @map("user_id")
+  user     User       @relation(fields: [userId], references: [id])
+  badgeId  String     @map("badge_id")
+  badge    SalesBadge @relation(fields: [badgeId], references: [id])
+  earnedAt DateTime   @default(now()) @map("earned_at")
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("sales_achievements")
+}
+
+model SalesTarget {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id])
+  periodType  String   @map("period_type") // MONTHLY, QUARTERLY, YEARLY
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  targetDeals Int      @map("target_deals")
+  targetValue Decimal  @map("target_value") @db.Decimal(14, 2)
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, periodType, periodStart])
+  @@index([userId])
+  @@map("sales_targets")
+}

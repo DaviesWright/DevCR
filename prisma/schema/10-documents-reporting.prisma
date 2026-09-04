@@ -1,0 +1,105 @@
+// Generic documents, e-sign templates, feedback/NPS, and saved reports.
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Document {
+  id                String            @id @default(cuid())
+  relatedEntityType RelatedEntityType @map("related_entity_type")
+  relatedEntityId   String            @map("related_entity_id")
+  name              String
+  fileUrl           String            @map("file_url")
+  uploadedById      String            @map("uploaded_by")
+  uploadedBy        User              @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([uploadedById])
+  @@map("documents")
+}
+
+model DocumentTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  fileUrl     String   @map("file_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("document_templates")
+}
+
+model Feedback {
+  id                String             @id @default(cuid())
+  customerId        String             @map("customer_id")
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id")
+  rating            Int?
+  comment           String?
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([relatedEntityType, relatedEntityId])
+  @@map("feedback")
+}
+
+model Survey {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  npsResponses NPSResponse[]
+
+  @@map("surveys")
+}
+
+model NPSResponse {
+  id         String   @id @default(cuid())
+  surveyId   String   @map("survey_id")
+  survey     Survey   @relation(fields: [surveyId], references: [id])
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
+  score      Int
+  comment    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([surveyId])
+  @@index([customerId])
+  @@map("nps_responses")
+}
+
+model Dashboard {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  config      Json
+  createdById String?  @map("created_by")
+  createdBy   User?    @relation("DashboardCreatedBy", fields: [createdById], references: [id])
+  isShared    Boolean  @default(false) @map("is_shared")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  reportSubscriptions ReportSubscription[]
+
+  @@map("dashboards")
+}
+
+model ReportSubscription {
+  id          String          @id @default(cuid())
+  dashboardId String          @map("dashboard_id")
+  dashboard   Dashboard       @relation(fields: [dashboardId], references: [id])
+  userId      String          @map("user_id")
+  user        User            @relation("ReportSubscriptionUser", fields: [userId], references: [id])
+  frequency   ReportFrequency @default(WEEKLY)
+  isActive    Boolean         @default(true) @map("is_active")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@unique([dashboardId, userId])
+  @@map("report_subscriptions")
+}

@@ -1,0 +1,227 @@
+// Roles, permissions, users, departments, sessions, and the audit trail.
+
+// Data-scope ladder from the Devtraco CRM Roles & Permissions Specification (v1.0, July 2026):
+// OWN = only records the user is directly assigned/owns; TEAM = own department's records;
+// DEPARTMENT = same as TEAM in this app (no sub-team hierarchy below Department yet);
+// ALL = every record in the module; SYSTEM = ALL plus admin config (users, roles, permissions).
+// Used identically for both dataScope (which records a role can read/write) and reportScope
+// (which reports a role can see) — the spec uses the same ladder for both.
+enum AccessScope {
+  OWN
+  TEAM
+  DEPARTMENT
+  ALL
+  SYSTEM
+}
+
+model Role {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  description String?
+  isSystem    Boolean     @default(false) @map("is_system")
+  // Devtraco spec fields — additive, default to the safest (most restrictive) values so any
+  // role created before this migration behaves as OWN-scoped read/write, not a silent full-access
+  // hole.
+  dataScope    AccessScope @default(OWN) @map("data_scope")
+  reportScope  AccessScope @default(OWN) @map("report_scope")
+  // "Executive View" roles (CEO, CSMO) — read-only regardless of dataScope reach.
+  isReadOnly   Boolean     @default(false) @map("is_read_only")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  permissions      RolePermission[]
+  users            User[]
+  fieldPermissions FieldPermission[]
+
+  @@map("roles")
+}
+
+// Sparse per-field override — absence of a row means the role's default access (WRITE unless
+// Role.isReadOnly, in which case READ) applies. Only restricted fields need a row here, so
+// adding a new field to an entity never requires touching this table.
+enum FieldAccess {
+  HIDDEN
+  READ
+  WRITE
+}
+
+model FieldPermission {
+  id         String            @id @default(cuid())
+  roleId     String            @map("role_id")
+  role       Role              @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  entityType RelatedEntityType @map("entity_type")
+  fieldName  String            @map("field_name")
+  access     FieldAccess
+
+  @@unique([roleId, entityType, fieldName])
+  @@map("field_permissions")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  module      String
+  action      String
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String     @map("role_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @map("permission_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Department {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  parentId  String?      @map("parent_id")
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children  Department[] @relation("DepartmentHierarchy")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("departments")
+}
+
+model User {
+  id               String      @id @default(cuid())
+  employeeCode     String?     @unique @map("employee_code")
+  firstName        String      @map("first_name")
+  lastName         String      @map("last_name")
+  email            String      @unique
+  phone            String?
+  passwordHash     String      @map("password_hash")
+  roleId           String      @map("role_id")
+  role             Role        @relation(fields: [roleId], references: [id])
+  departmentId     String?     @map("department_id")
+  department       Department? @relation(fields: [departmentId], references: [id])
+  isActive         Boolean     @default(true) @map("is_active")
+  twoFactorEnabled Boolean     @default(false) @map("two_factor_enabled")
+  lastLoginAt      DateTime?   @map("last_login_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+  deletedAt        DateTime?   @map("deleted_at")
+
+  sessions          UserSession[]
+  auditLogs         AuditLog[]
+  apiLogs           ApiLog[]
+  bantScores        BantScore[]
+  salesAgentProfile SalesAgent?
+  emailConnections  EmailAccountConnection[] @relation("EmailAccountConnectionUser")
+  workflowsCreated  Workflow[] @relation("WorkflowCreatedBy")
+  savedViews        SavedView[] @relation("SavedViewCreatedBy")
+
+  // CRM
+  leadsAssigned       Lead[]         @relation("LeadAssignedTo")
+  leadActivities      LeadActivity[] @relation("LeadActivityCreatedBy")
+  opportunitiesOwned  Opportunity[]  @relation("OpportunityOwner")
+  siteVisitsConducted SiteVisit[]    @relation("SiteVisitConductedBy")
+  tasksAssigned       Task[]         @relation("TaskAssignedTo")
+  interactions        Interaction[]  @relation("InteractionUser")
+
+  // Customers
+  customersAssigned Customer[] @relation("CustomerAssignedSalesRep")
+
+  // Inventory
+  unitPriceChanges  UnitPricingHistory[] @relation("UnitPriceChangedBy")
+  unitStatusChanges UnitStatusHistory[]  @relation("UnitStatusChangedBy")
+
+  // Pipeline stage history
+  leadStageHistoryChanges        LeadStageHistory[]        @relation("LeadStageHistoryChangedBy")
+  opportunityStageHistoryChanges OpportunityStageHistory[] @relation("OpportunityStageHistoryChangedBy")
+
+  // Sales
+  contractsPrepared          SalesContract[]     @relation("ContractPreparedBy")
+  contractAmendmentsApproved ContractAmendment[] @relation("ContractAmendmentApprovedBy")
+
+  // Finance
+  paymentsRecorded Payment[] @relation("PaymentRecordedBy")
+  refundsApproved  Refund[]  @relation("RefundApprovedBy")
+  invoicesIssued   Invoice[] @relation("InvoiceIssuedBy")
+
+  // Construction
+  constructionProgressUpdates UnitConstructionProgress[] @relation("ConstructionProgressUpdatedBy")
+  snaggingInspections         SnaggingInspection[]       @relation("SnaggingInspectedBy")
+  contractorAssignments       ContractorAssignment[]     @relation("ContractorAssignmentAssignedBy")
+
+  // Customer Experience
+  handoversConducted     Handover[]        @relation("HandoverConductedBy")
+  warrantyClaimsReviewed WarrantyClaim[]   @relation("WarrantyClaimReviewedBy")
+  complaintsAssigned     Complaint[]       @relation("ComplaintAssignedTo")
+  complaintUpdates       ComplaintUpdate[] @relation("ComplaintUpdateBy")
+  escalationsRaised      Escalation[]      @relation("EscalationFrom")
+  escalationsReceived    Escalation[]      @relation("EscalationTo")
+  clientHandoversAsConsultant ClientHandover[] @relation("ClientHandoverConsultant")
+  clientHandoversAsCxLead    ClientHandover[] @relation("ClientHandoverCxLead")
+  checklistRunsStarted       ChecklistRun[]   @relation("ChecklistRunStartedBy")
+  checklistStepsCompleted    ChecklistStepCompletion[] @relation("ChecklistStepCompletedBy")
+
+  // Facilities
+  maintenanceRequestsAssigned MaintenanceRequest[] @relation("MaintenanceRequestAssignedTo")
+
+  // Documents & Reporting
+  documentsUploaded   Document[]           @relation("DocumentUploadedBy")
+  dashboardsCreated   Dashboard[]          @relation("DashboardCreatedBy")
+  reportSubscriptions ReportSubscription[] @relation("ReportSubscriptionUser")
+
+  // Marketing
+  marketingSegmentsCreated  MarketingSegment[]  @relation("MarketingSegmentCreatedBy")
+  marketingCampaignsCreated MarketingCampaign[] @relation("MarketingCampaignCreatedBy")
+  marketingJourneysCreated  MarketingJourney[]  @relation("MarketingJourneyCreatedBy")
+
+  // Sales gamification
+  salesPoints       SalesPoint[]
+  salesAchievements SalesAchievement[]
+  salesTargets      SalesTarget[]
+
+  // Sales commission milestones
+  saleMilestonesApproved SaleMilestoneChecklist[] @relation("SaleMilestoneApprovedBy")
+
+  @@index([roleId])
+  @@index([departmentId])
+  @@map("users")
+}
+
+model UserSession {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  changes    Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

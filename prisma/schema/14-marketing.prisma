@@ -1,0 +1,343 @@
+// Marketing module (docs/marketing-spec.md) — Customer Data Platform-lite, segmentation,
+// campaigns, journeys, and engagement tracking. Adapted from a generic Node/Sequelize/
+// RabbitMQ/Redis/SendGrid/Twilio blueprint to this app's actual Next.js + Prisma + Postgres
+// stack: no message queue or cache layer, and outbound sends are simulated/logged rather than
+// wired to a real ESP/SMS/WhatsApp provider (same "simulate/log only" pattern used elsewhere
+// in this app for external integrations). Names are prefixed `Marketing`/`AI` to avoid
+// colliding with the existing lead-attribution `Campaign` model and `Interaction` model.
+
+enum MarketingChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+// Tags a manual (isDynamic: false) MarketingSegment with the outreach channel it was built
+// for — e.g. a hand-picked "Call list" for today's follow-ups, distinct from MarketingChannel
+// which only covers channels the app can actually send through (no CALL there).
+enum MarketingListChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  CALL
+}
+
+enum MessageStatus {
+  DRAFT
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  REPLIED
+  FAILED
+}
+
+enum MarketingCampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum MarketingJourneyStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum JourneyActionType {
+  SEND_EMAIL
+  SEND_SMS
+  SEND_WHATSAPP
+  WAIT
+  ADD_TO_SEGMENT
+  REMOVE_FROM_SEGMENT
+  CREATE_TASK
+}
+
+enum CustomerJourneyStatus {
+  ACTIVE
+  COMPLETED
+  EXITED
+}
+
+enum EngagementEventType {
+  PAGE_VIEW
+  PROPERTY_VIEW
+  BROCHURE_DOWNLOAD
+  EMAIL_OPEN
+  EMAIL_CLICK
+  SMS_REPLY
+  WHATSAPP_REPLY
+  SITE_VISIT_ATTENDED
+  PAYMENT_MADE
+  COMPLAINT_SUBMITTED
+  PORTAL_LOGIN
+  CAMPAIGN_SENT
+  DIRECT_MESSAGE_SENT
+}
+
+enum AIContentType {
+  EMAIL_SUBJECT
+  EMAIL_BODY
+  SMS_CONTENT
+  WHATSAPP_CONTENT
+}
+
+// Non-committal marketing tag, coarser than nothing but finer than Customer.segment.
+// One row per named persona (e.g. "Diaspora — Nostalgic Retiree"); campaigns/segments target it.
+model MarketingPersona {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  description       String?
+  suggestedChannels String?  @map("suggested_channels")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  campaigns      MarketingCampaign[]
+  personaSignals LeadPersonaSignal[]
+
+  @@map("marketing_personas")
+}
+
+// A saved audience definition. `criteria` is a small structured filter (kycStatus, buyer
+// segment, min engagement score, created-after date, etc.) evaluated by
+// recomputeMarketingSegment() in src/lib/actions/marketing.ts — not a full rules engine.
+model MarketingSegment {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  criteria       Json
+  isDynamic      Boolean   @default(true) @map("is_dynamic")
+  channel        MarketingListChannel? @map("channel")
+  memberCount    Int       @default(0) @map("member_count")
+  lastComputedAt DateTime? @map("last_computed_at")
+  createdById    String?   @map("created_by")
+  createdBy      User?     @relation("MarketingSegmentCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  members   MarketingSegmentMember[]
+  campaigns MarketingCampaign[]
+  journeys  MarketingJourney[]
+
+  @@map("marketing_segments")
+}
+
+model MarketingSegmentMember {
+  id            String           @id @default(cuid())
+  segmentId     String           @map("segment_id")
+  segment       MarketingSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  customerId    String           @map("customer_id")
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  manuallyAdded Boolean          @default(false) @map("manually_added")
+  addedAt       DateTime         @default(now()) @map("added_at")
+
+  @@unique([segmentId, customerId])
+  @@index([customerId])
+  @@map("marketing_segment_members")
+}
+
+model MessageTemplate {
+  id        String           @id @default(cuid())
+  name      String
+  channel   MarketingChannel
+  subject   String?
+  bodyHtml  String?          @map("body_html")
+  bodyText  String?          @map("body_text")
+  variables Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  campaigns MarketingCampaign[]
+  messages  MarketingMessage[]
+
+  @@map("message_templates")
+}
+
+model MarketingCampaign {
+  id          String                  @id @default(cuid())
+  name        String
+  personaId   String?                 @map("persona_id")
+  persona     MarketingPersona?       @relation(fields: [personaId], references: [id])
+  segmentId   String?                 @map("segment_id")
+  segment     MarketingSegment?       @relation(fields: [segmentId], references: [id])
+  templateId  String?                 @map("template_id")
+  template    MessageTemplate?        @relation(fields: [templateId], references: [id])
+  channel     MarketingChannel
+  objective   String?
+  budget      Decimal?                @db.Decimal(12, 2)
+  currency    String                  @default("USD")
+  status      MarketingCampaignStatus @default(DRAFT)
+  startDate   DateTime?               @map("start_date")
+  endDate     DateTime?               @map("end_date")
+  createdById String?                 @map("created_by")
+  createdBy   User?                   @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+
+  messages  MarketingMessage[]
+  aiContent AIContentLog[]
+  abTests   ABTest[]
+
+  @@map("marketing_campaigns")
+}
+
+// A single simulated send to one customer. No real ESP/SMS/WhatsApp provider is configured —
+// sendMarketingCampaign() creates these directly with status SENT and a description noting the
+// simulation, same pattern as the simulated lead-acknowledgment email and Reservation Form.
+model MarketingMessage {
+  id          String             @id @default(cuid())
+  customerId  String             @map("customer_id")
+  customer    Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  campaignId  String?            @map("campaign_id")
+  campaign    MarketingCampaign? @relation(fields: [campaignId], references: [id])
+  journeyId   String?            @map("journey_id")
+  journey     MarketingJourney?  @relation(fields: [journeyId], references: [id])
+  channel     MarketingChannel
+  templateId  String?            @map("template_id")
+  template    MessageTemplate?   @relation(fields: [templateId], references: [id])
+  subject     String?
+  body        String
+  status      MessageStatus      @default(DRAFT)
+  sentAt      DateTime?          @map("sent_at")
+  deliveredAt DateTime?          @map("delivered_at")
+  openedAt    DateTime?          @map("opened_at")
+  clickedAt   DateTime?          @map("clicked_at")
+  repliedAt   DateTime?          @map("replied_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([campaignId])
+  @@index([journeyId])
+  @@map("marketing_messages")
+}
+
+// Unified engagement log across marketing + product touchpoints, distinct from the
+// Lead-scoped BehavioralScore (pre-conversion) — this is Customer-scoped and ongoing.
+model EngagementEvent {
+  id         String              @id @default(cuid())
+  customerId String              @map("customer_id")
+  customer   Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  eventType  EngagementEventType @map("event_type")
+  channel    String?
+  occurredAt DateTime            @default(now()) @map("occurred_at")
+  source     String?
+  metadata   Json?
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  @@index([customerId, occurredAt])
+  @@index([eventType, occurredAt])
+  @@map("engagement_events")
+}
+
+// A reusable, ordered sequence of actions. Execution is manual/simulated via
+// enrollSegmentInJourney() — there is no background scheduler in this app, so steps are
+// walked immediately rather than on a real wait-time delay (waitHours is recorded for
+// reference/UI display, not enforced by a live clock).
+model MarketingJourney {
+  id               String                 @id @default(cuid())
+  name             String
+  description      String?
+  status           MarketingJourneyStatus @default(DRAFT)
+  segmentId        String?                @map("segment_id")
+  segment          MarketingSegment?      @relation(fields: [segmentId], references: [id])
+  triggerEventType EngagementEventType?   @map("trigger_event_type")
+  createdById      String?                @map("created_by")
+  createdBy        User?                  @relation("MarketingJourneyCreatedBy", fields: [createdById], references: [id])
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  steps            MarketingJourneyStep[]
+  customerJourneys CustomerJourney[]
+  messages         MarketingMessage[]
+
+  @@map("marketing_journeys")
+}
+
+model MarketingJourneyStep {
+  id           String           @id @default(cuid())
+  journeyId    String           @map("journey_id")
+  journey      MarketingJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  stepOrder    Int              @map("step_order")
+  name         String
+  actionType   JourneyActionType @map("action_type")
+  actionConfig Json             @map("action_config")
+  waitHours    Int?             @map("wait_hours")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  customerJourneysAt CustomerJourney[]
+
+  @@unique([journeyId, stepOrder])
+  @@map("marketing_journey_steps")
+}
+
+model CustomerJourney {
+  id             String                @id @default(cuid())
+  customerId     String                @map("customer_id")
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  journeyId      String                @map("journey_id")
+  journey        MarketingJourney      @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  currentStepId  String?               @map("current_step_id")
+  currentStep    MarketingJourneyStep? @relation(fields: [currentStepId], references: [id])
+  status         CustomerJourneyStatus @default(ACTIVE)
+  enteredAt      DateTime              @default(now()) @map("entered_at")
+  lastActivityAt DateTime              @default(now()) @map("last_activity_at")
+  exitReason     String?               @map("exit_reason")
+
+  @@index([customerId])
+  @@index([journeyId])
+  @@map("customer_journeys")
+}
+
+// Append-only bridge from Sales' "suspected persona" capture (Lead.suspectedPersona, set via
+// markRealOpportunity — see docs/real-opportunities-spec.md §3) to Marketing. Sales writes
+// once per capture via a Lead-side action; Marketing only ever reads this table.
+model LeadPersonaSignal {
+  id               String            @id @default(cuid())
+  leadId           String            @map("lead_id")
+  lead             Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  personaId        String?           @map("persona_id")
+  persona          MarketingPersona? @relation(fields: [personaId], references: [id])
+  suspectedPersona String            @map("suspected_persona")
+  note             String?
+  capturedAt       DateTime          @default(now()) @map("captured_at")
+
+  @@index([leadId])
+  @@map("lead_persona_signals")
+}
+
+// Schema-only for now: no AI provider (Azure OpenAI / OpenAI API) is configured in this app,
+// so there is no "Generate" button wired to a real model. Kept so the data model matches the
+// spec and any future integration has a landing table.
+model AIContentLog {
+  id          String             @id @default(cuid())
+  customerId  String?            @map("customer_id")
+  customer    Customer?          @relation(fields: [customerId], references: [id])
+  campaignId  String?            @map("campaign_id")
+  campaign    MarketingCampaign? @relation(fields: [campaignId], references: [id])
+  contentType AIContentType      @map("content_type")
+  promptUsed  Json               @map("prompt_used")
+  output      String
+  approved    Boolean            @default(false)
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@map("ai_content_logs")
+}
+
+// Schema-only for now: no traffic-splitting send path exists to actually run a live A/B test.
+model ABTest {
+  id         String            @id @default(cuid())
+  campaignId String            @map("campaign_id")
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  variantA   Json              @map("variant_a")
+  variantB   Json              @map("variant_b")
+  winner     String?
+  sampleSize Int?              @map("sample_size")
+  confidence Decimal?          @db.Decimal(5, 2)
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  @@map("ab_tests")
+}
